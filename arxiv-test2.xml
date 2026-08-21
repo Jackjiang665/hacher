@@ -1,0 +1,218 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<feed xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/" xmlns:arxiv="http://arxiv.org/schemas/atom" xmlns="http://www.w3.org/2005/Atom">
+  <id>https://arxiv.org/api/vOZSAaijXhGrYZRVER17a7EG2SQ</id>
+  <title>arXiv Query: search_query=all:"large language model" AND all:uncertainty&amp;id_list=&amp;start=0&amp;max_results=8</title>
+  <updated>2026-08-21T13:47:19Z</updated>
+  <link href="https://arxiv.org/api/query?search_query=all:%22large+language+model%22+AND+all:uncertainty&amp;start=0&amp;max_results=8&amp;id_list=" type="application/atom+xml"/>
+  <opensearch:itemsPerPage>8</opensearch:itemsPerPage>
+  <opensearch:totalResults>2073</opensearch:totalResults>
+  <opensearch:startIndex>0</opensearch:startIndex>
+  <entry>
+    <id>http://arxiv.org/abs/2608.19323v1</id>
+    <title>Improved Confidence Estimates for Black-Box Large Language Models</title>
+    <updated>2026-08-19T18:00:04Z</updated>
+    <link href="https://arxiv.org/abs/2608.19323v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.19323v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Uncertainty quantification (UQ) is essential for the safe deployment of large language models (LLMs). Existing methods, from verbalized confidence to ones requiring multiple generations, are often zero-shot and produce scores quantifying uncertainty without the need for labelled data. Nonetheless, in practice one must always evaluate their performance on a dataset of interest before deployment. In this work we show that, by leveraging this dataset, we consistently outperform these existing scores. Specifically, we build simple classifiers that predict LLM response correctness by using these scores and the correctness of similar queries as features. Our method produces minimal computational overhead, making it a cheap and straightforward enhancement for UQ in LLMs for real-world applications.</summary>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="stat.ML" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-19T18:00:04Z</published>
+    <arxiv:primary_category term="cs.LG"/>
+    <author>
+      <name>Sokhna Diarra Mbacke</name>
+    </author>
+    <author>
+      <name>Mouloud Belbahri</name>
+    </author>
+    <author>
+      <name>Gabriel Loaiza-Ganem</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.18260v1</id>
+    <title>Redakto - The Incognito Tab for LLMs</title>
+    <updated>2026-08-18T19:21:12Z</updated>
+    <link href="https://arxiv.org/abs/2608.18260v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.18260v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Large Language Models (LLMs) are being increasingly used in everyday applications. A major challenge in the context of LLMs or Artificial Intelligence (AI) in general is to ensure privacy when using them, meaning that personally identifiable information (PII) is removed from any text that enters an LLM. These challenges have become more urgent with novel EU legislation. Uncertainty around LLM usage with respect to privacy concerns in EU countries can be a major blocker for the speed of innovation and transfer from research to applications. Here we present \textbf{Redakto}, a tool that can be used for anonymizing text prior to feeding it to an LLM or other downstream text processing. We provide state-of-the-art functionalities for both redaction of PII but also when used for pseudonymization. These functionalities are exposed such that they can easily be used by end-users, through the Redakto web application, and by developers and researchers, via REST APIs and model context protocol (MCP) hooks. The implementation is fully open source, requires modest compute resources, and can be readily deployed on local hardware. In contrast to prior work and in order to better assess the quality of the anonymized texts, we conduct extensive empirical evaluations on textual data from legal and medical domain with respect to both privacy and utility of the redacted texts. Our empirical results demonstrate that the texts anonymized with different redaction strategies achieve utility scores on par with the original texts, suggesting that anonymization with Redakto can be used for LLM tasks without substantial negative impact for the tasks we explored.</summary>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CR" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.IR" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-18T19:21:12Z</published>
+    <arxiv:comment>Accepted at WIPE-OUT 2026, 2nd Workshop on Machine Unlearning and Privacy Preservation at ECML-PKDD</arxiv:comment>
+    <arxiv:primary_category term="cs.AI"/>
+    <author>
+      <name>Saurav Kumar Saha</name>
+    </author>
+    <author>
+      <name>Tom Röhr</name>
+    </author>
+    <author>
+      <name>Felix Bießmann</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.17411v1</id>
+    <title>GUPO: Gradient Uncertainty-aware Policy Optimization for Post-Training Large Language Models</title>
+    <updated>2026-08-18T06:22:55Z</updated>
+    <link href="https://arxiv.org/abs/2608.17411v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.17411v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Group Relative Policy Optimization (GRPO) has become a widely used approach for post-training Large Language Models (LLMs) for reasoning. In GRPO, the group gradients induced by different queries within the same mini-batch are directly averaged to form the policy update. However, these group gradients can point in conflicting directions. Our empirical analysis suggests that group-gradient conflicts tend to be associated with less effective policy updates, motivating the need for a reliable aggregated update direction under such conflicts. Standard GRPO aggregation treats the realized group gradients as deterministic contributions and does not account for differences in their reliability during aggregation. To address this issue, we propose Gradient Uncertainty-Aware Policy Optimization (GUPO), which models each group gradient as a random variable under a Bayesian formulation and estimates its probability distribution. GUPO then derives gradient uncertainty using a Dirichlet-based formulation and uses it to calibrate the contribution of each group gradient during aggregation. Extensive experiments on multiple benchmarks demonstrate the effectiveness of GUPO.</summary>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-18T06:22:55Z</published>
+    <arxiv:primary_category term="cs.LG"/>
+    <author>
+      <name>Peizheng Guo</name>
+    </author>
+    <author>
+      <name>Jianqi Zhang</name>
+    </author>
+    <author>
+      <name>Xingyu Zhang</name>
+    </author>
+    <author>
+      <name>Yun Fan</name>
+    </author>
+    <author>
+      <name>Jiahuan Zhou</name>
+    </author>
+    <author>
+      <name>Changwen Zheng</name>
+    </author>
+    <author>
+      <name>Wenwen Qiang</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.17084v1</id>
+    <title>Uncertainty-Aware Decision Making in Multimodal Large Language Models</title>
+    <updated>2026-08-17T19:43:21Z</updated>
+    <link href="https://arxiv.org/abs/2608.17084v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.17084v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Multimodal large language models (MLLMs) increasingly answer questions whose correctness depends on visual, textual, temporal, acoustic, document, chart, or embodied evidence. Their failures are therefore not only linguistic. A fluent answer may conceal poor input quality, a perceptual error, weak grounding, conflict between modalities, unstable reasoning, distribution shift, or a question that is not answerable from the supplied evidence. This survey organizes the literature on uncertainty-aware MLLMs around a decision-centered framework: uncertainty sources give rise to observable signals, signals must be calibrated or controlled for risk, and calibrated uncertainty should determine the system action. We review work on token and logit uncertainty, semantic disagreement, perturbation instability, grounding and attribution scores, verbalized confidence, verifier and judge scores, conformal prediction, selective answering, abstention, clarification, retrieval, self-checking, and escalation. The central argument is that uncertainty should not be evaluated only as a confidence number; it should be evaluated by whether it improves behavior under insufficient, conflicting, shifted, or high-risk multimodal evidence. We position this survey against text-only uncertainty and abstention surveys, broad MLLM surveys, MLLM hallucination surveys, and safety-oriented reviews. We conclude with open problems in source-aware decomposition, action-aware benchmarks, calibration under shift, black-box uncertainty estimation, broader modality coverage, reproducible reporting, and human-centered uncertainty communication.</summary>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-17T19:43:21Z</published>
+    <arxiv:primary_category term="cs.CL"/>
+    <author>
+      <name>Abderrahmene Boudiaf</name>
+    </author>
+    <author>
+      <name>Irfan Hussain</name>
+    </author>
+    <author>
+      <name>Sajid Javed</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.16690v1</id>
+    <title>AnchorScore: A CLIP-Based Diagnostic of MLLM Annotation Difficulty</title>
+    <updated>2026-08-17T15:10:33Z</updated>
+    <link href="https://arxiv.org/abs/2608.16690v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.16690v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Multimodal large language models (MLLMs) are widely used for automated annotation, yet their per-class accuracy varies widely (e.g., 12%-98% across the 13 classes of three classroom sub-datasets) and is expensive to measure: evaluating one 27B MLLM on 5,416 validation images takes roughly 14 hours, whereas a frozen-CLIP pass over the same images completes in about 3 minutes. A low-cost signal for ranking classes by expected MLLM annotation difficulty a priori remains underexplored. Building on the AnchorProxy construct (per-class zero-shot CLIP accuracy) introduced in the companion study, this paper systematically evaluates its full-frame formulation, termed AnchorScore here, as an a priori diagnostic that flags the classes MLLMs are least likely to annotate reliably.
+  On classroom behavior data (SCB5, 13 classes, 6 MLLMs), AnchorScore correlates with per-class MLLM accuracy (Spearman rho = 0.769, p = 0.002, n = 13). None of the alternative difficulty predictors (DINOv2, ResNet-50, SigLIP, or MLLM self-verbalized uncertainty) showed a significant class-level correlation at n = 13. A cross-model consensus control suggests AnchorScore primarily captures a shared class-difficulty factor rather than a CLIP-specific signal. An independent replication on Stanford40 Actions yields a nearly identical effect (rho = 0.817, p &lt; 0.001); the association is strongest on activity-recognition data and attenuates on medical and satellite imagery.
+  Three practical applications follow: a deployable hybrid CLIP/MLLM routing strategy (predicted-class routing: up to +23 pp over CLIP-only at roughly 44% MLLM cost savings), prompt disambiguation on hard classes (exploratory), and review-priority prediction for human verification. AnchorScore does not estimate exact MLLM accuracy; it provides a low-cost ranking signal that directs expensive MLLM evaluation to the classes where it is most informative.</summary>
+    <category term="cs.CV" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-17T15:10:33Z</published>
+    <arxiv:comment>37 pages, 7 figures, 12 tables</arxiv:comment>
+    <arxiv:primary_category term="cs.CV"/>
+    <author>
+      <name>Yan Ma</name>
+    </author>
+    <author>
+      <name>Lizhuo Zhang</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.16657v1</id>
+    <title>The ultimate carbon cost of a ChatGPT query</title>
+    <updated>2026-08-17T14:53:01Z</updated>
+    <link href="https://arxiv.org/abs/2608.16657v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.16657v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>This paper reviews and combines findings from the fields of product and life-cycle analysis [36, 38], the usage of modern transformer- based large language models (LLM) [6], as well as on greenhouse gas emissions and the ultimate cost of their subsequent consequences for future generations [2]. In this paper, it is shown that the carbon cost of a LLM query is in the order of magnitude of (USD) $0.4 per query for the future human population in the form of environmental disruptions. This corresponds to emissions in the magnitude of 10 gCO2eq/query. The most significant unknown factor in that calculation being the number of tokens computed (1k to 100k tokens equal 1.2 cent/query to 120 cent/query). This number is subject to a wide range of calculation uncertainties and is less to be seen as a matter of fact and more as an order of magnitude estimate. This estimate is aimed towards aiding the discourse surrounding AI systems by uncover- ing the inevitable consequences of technological development by the means of attaching a consequence in a familiar unit to it. By the introduction of the per query ultimate carbon cost (QCC), even if attached to great uncertainty, it is highlighted that the use of AI services happens within hypercomplex interdependent systems and has concrete consequences for our planetary health. The spread of the awareness about the interdependence of planetary health and AI usage can be useful for the individual user in the formation of political opinion through discourse [5] as well as a literate usage of AI systems [31]. Ways to increase the accuracy of the estima- tions, such as incorporating the cost of AIs water consumption or further determining the realistic token count of a query, have been identified as further research targets.</summary>
+    <category term="cs.CY" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-17T14:53:01Z</published>
+    <arxiv:comment>5 pages,0 figures. Accepted at the 2nd International Workshop on Low Carbon Computing (LOCO 2026), Lancaster University, United Kingdom, 10-11 September 2026. Part of the LOCO 2026 proceedings, arXiv:LOCO2026/P15</arxiv:comment>
+    <arxiv:primary_category term="cs.CY"/>
+    <author>
+      <name>Paul Kron</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.16002v2</id>
+    <title>From Sequence to Structure: Relational Uncertainty Propagation for LLM Agents</title>
+    <updated>2026-08-19T01:59:37Z</updated>
+    <link href="https://arxiv.org/abs/2608.16002v2" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.16002v2" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Reliable uncertainty quantification (UQ) is essential for deploying large language model (LLM) agents in complex interactive environments. Existing UQ methods largely rely on local signals, such as token probabilities, predictive entropy, or per-step confidence, and therefore overlook the long-range dependencies through which errors accumulate across an execution trajectory. As a result, they may fail to identify agent failures whose causes originate several reasoning or interaction steps before the final answer. We propose RUPA (Relational Uncertainty Propagation for Agents), a trajectory-level UQ framework for LLM agents. RUPA represents an execution history as a directed trajectory graph in which reasoning states, tool interactions, and environment feedback are nodes connected by temporal and semantic dependency edges. It then propagates uncertainty over this graph to capture how execution risk accumulates and transfers across interaction steps. The propagated signal is combined with trajectory-level behavioral features and goal-alignment information to produce a confidence estimate for the full agent trajectory. We evaluate RUPA on representative agent benchmarks, including $τ$-2, Terminal-Bench-2, and GAIA, using 6 open-source LLMs spanning multiple model families. Experimental results show that RUPA consistently outperforms existing UQ methods by providing more accurate uncertainty estimates, enabling earlier failure detection, and improving uncertainty-guided agent execution across diverse agent tasks. These results demonstrate that explicitly modeling relational dependency is crucial to reliable UQ for long-horizon LLM agents, providing a practical foundation for trustworthy agent execution.</summary>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-17T01:40:14Z</published>
+    <arxiv:primary_category term="cs.CL"/>
+    <author>
+      <name>Zhengzhao Ma</name>
+    </author>
+    <author>
+      <name>Boxi Cao</name>
+    </author>
+    <author>
+      <name>Yaojie Lu</name>
+    </author>
+    <author>
+      <name>Hongyu Lin</name>
+    </author>
+    <author>
+      <name>Xianpei Han</name>
+    </author>
+    <author>
+      <name>Le Sun</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.15949v2</id>
+    <title>Ask to Be Sure: Informative Interactions for Confident Multi-Turn LLM Recommendation</title>
+    <updated>2026-08-20T01:49:38Z</updated>
+    <link href="https://arxiv.org/abs/2608.15949v2" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.15949v2" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Recent advances in large language models (LLMs) have enabled their use as conversational recommender systems (CRS), demonstrating strong recommendation accuracy and natural dialogue. However, guiding multi-turn interactions to elicit user preferences effectively remains challenging. Existing approaches either use separate reinforcement learning agents with templated interactions or optimize for interactivity judged by another LLM, without measuring how much useful information is actually gained. We propose a new approach that quantifies the effectiveness of each interaction by the reduction in the assistant's uncertainty, measured via entropy over recommendations. We apply this entropy reduction as a reward---without relying on ground-truth recommendations, which are often unavailable in real-world scenarios---to fine-tune the LLM, enabling strategic interaction generation. Empirical results with supervised fine-tuning (SFT) and direct preference optimization (DPO) on the INSPIRED and ReDial datasets show that our method improves both recommendation quality and conversational efficiency.</summary>
+    <category term="cs.IR" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-16T22:14:12Z</published>
+    <arxiv:comment>CIKM 2026</arxiv:comment>
+    <arxiv:primary_category term="cs.IR"/>
+    <author>
+      <name>Cedar Site Bai</name>
+    </author>
+    <author>
+      <name>Zhenyu Liao</name>
+    </author>
+    <author>
+      <name>Duanshun Li</name>
+    </author>
+    <author>
+      <name>Sheikh Sarwar</name>
+    </author>
+    <author>
+      <name>Huiyuan Chen</name>
+    </author>
+    <author>
+      <name>Yuan Chen</name>
+    </author>
+    <author>
+      <name>Changhe Yuan</name>
+    </author>
+    <author>
+      <name>Haiyang Zhang</name>
+    </author>
+    <author>
+      <name>Qilin Qi</name>
+    </author>
+    <arxiv:doi>10.1145/3799682.3839868</arxiv:doi>
+    <link rel="related" href="https://doi.org/10.1145/3799682.3839868" title="doi"/>
+  </entry>
+</feed>

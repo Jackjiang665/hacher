@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>hacher · 个人智能工作台</title>
+  <link rel="stylesheet" href="vendor/xterm.css" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-logo"><img src="assets/hacher-icon.png" alt="hacher"></span><div><b>hacher</b><small>个人智能工作台</small></div></div>
+      <button class="new-btn" data-action="quick-add"><span>＋</span> 快速新增 <kbd>⌘ N</kbd></button>
+      <nav id="nav">
+        <p>核心</p>
+        <button class="nav-item active" data-view="dashboard"><i>⌂</i><span>工作台总览</span></button>
+        <button class="nav-item" data-view="today"><i>✓</i><span>今日待办</span><em id="todoBadge" hidden>0</em></button>
+        <button class="nav-item" data-view="calendar"><i>◷</i><span>日程安排</span></button>
+        <button class="nav-item" data-view="projects"><i>▦</i><span>项目中心</span></button>
+        <p>学习与研究</p>
+        <button class="nav-item" data-view="papers"><i>⌁</i><span>论文与科研</span></button>
+        <button class="nav-item" data-view="english"><i>A</i><span>英语学习</span></button>
+        <button class="nav-item" data-view="briefing"><i>✦</i><span>每日情报</span></button>
+        <p>创作与实验</p>
+        <button class="nav-item" data-view="diy"><i>◇</i><span>DIY 项目</span></button>
+        <button class="nav-item" data-view="inventory"><i>⌘</i><span>电子元件库</span><em id="inventoryBadge" hidden>0</em></button>
+        <p>智能</p>
+        <button class="nav-item" data-view="terminal"><i>›_</i><span>Agent 终端</span><em>Claude</em></button>
+        <button class="nav-item" data-view="memory"><i>◉</i><span>AI 记忆中心</span><em id="memoryBadge" hidden>0</em></button>
+      </nav>
+      <button class="ai-entry" data-view-link="terminal"><span class="ai-glyph">›_</span><div><b>Agent 终端</b><small>Claude Code · 已安装</small></div><i>›</i></button>
+      <div class="profile"><span>XY</span><div><b>我的工作区</b><small>本地模式 · 已保存</small></div><button>•••</button></div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <button class="icon-btn mobile-menu" id="mobileMenu">☰</button>
+        <div class="search" data-action="search"><span>⌕</span><input placeholder="搜索项目、论文、实验或元器件…" readonly /><kbd>Ctrl K</kbd></div>
+        <div class="top-actions"><button class="icon-btn" title="AI 收件箱" data-action="inbox">⇩</button><button class="icon-btn" title="通知" data-action="notifications">♢<b class="notify" id="notificationDot" hidden></b></button><button class="avatar" title="个人设置" data-action="profile">XY</button></div>
+      </header>
+
+      <div class="pages">
+        <section class="page active" id="dashboard">
+          <div class="page-head"><div><p class="date-line" id="todayDate"></p><h1>早上好，开始建立你的工作台 <span>👋</span></h1><p id="dashboardSummary">目前还没有个人数据。创建任务或项目后，这里会自动汇总。</p></div><button class="solid-btn" data-action="daily-plan">✦ 让 AI 规划今天</button></div>
+          <div class="dashboard-grid">
+            <article class="card focus-card span-2"><div class="card-title"><div><p class="label">今日焦点</p><h2>最重要的事情</h2></div><button class="text-btn" data-view-link="today">查看全部 →</button></div><div class="focus-list" id="focusList"></div></article>
+            <article class="card ai-brief-card"><div class="ai-badge">✦</div><p class="label light">AI 晨间简报</p><h2>尚未生成</h2><p class="brief-copy">设置你关注的研究方向后，AI 可以通过真实来源检索并整理最新信息。</p><button data-view-link="briefing">设置关注主题 <span>→</span></button></article>
+            <article class="card projects-card span-2"><div class="card-title"><div><p class="label">项目进展</p><h2>正在推进</h2></div><button class="text-btn" data-view-link="projects">全部项目 →</button></div><div id="dashboardProjects"></div></article>
+            <article class="card schedule-card"><div class="card-title"><div><p class="label">今日日程</p><h2>接下来</h2></div><button class="text-btn" data-view-link="calendar">日历 →</button></div><div id="todaySchedule"></div></article>
+            <article class="card inbox-card"><div class="card-title"><div><p class="label">AI 收件箱</p><h2>等待你确认</h2></div><span class="count-pill">0</span></div><div class="empty-state small"><b>收件箱是空的</b><small>上传截图、论文或其他资料开始处理</small></div><button class="drop-zone" data-action="upload"><span>＋</span> 选择截图、论文或文件</button><input type="file" id="fileInput" hidden /></article>
+            <article class="card inventory-mini"><div class="card-title"><div><p class="label">电子实验室</p><h2>元器件概览</h2></div><button class="text-btn" data-view-link="inventory">进入仓库 →</button></div><div class="metric-row"><div><strong id="dashInventoryTypes">0</strong><small>种元器件</small></div><div><strong id="dashInventoryTotal">0</strong><small>估算总数</small></div><div><strong class="red" id="dashLowStock">0</strong><small>低库存</small></div></div><div class="empty-state small"><small>还没有库存数据，可手动添加或使用截图识别入库</small></div></article>
+          </div>
+        </section>
+
+        <section class="page" id="today"><div class="page-head compact"><div><p class="date-line">专注当下</p><h1>今日待办</h1><p>任务可以来自你自己，也可以由 AI 从项目、论文和日程中整理出来。</p></div><button class="solid-btn" data-action="add-task">＋ 新建任务</button></div><div class="two-col"><article class="card"><div class="section-tabs"><button class="active" data-task-filter="all">今天</button><button data-task-filter="open">未完成</button><button data-task-filter="done">已完成</button></div><div class="full-task-list" id="fullTaskList"></div></article><aside><article class="card ai-tip"><span>✦</span><h3>AI 的安排建议</h3><p id="dailyPlanHint">当前没有足够的真实任务数据。先创建待办，再让 AI 帮你安排。</p><button data-action="daily-plan">让 AI 安排</button></article><article class="card stats-card"><p class="label">任务统计</p><h3>当前完成率</h3><div class="ring" id="taskCompletionRing"><span><b id="taskCompletionPercent">0</b><small>%</small></span></div><p id="taskCompletionSummary">当前暂无任务</p></article></aside></div></section>
+
+        <section class="page" id="calendar"><div class="page-head compact"><div><p class="date-line">时间安排</p><h1>日程安排</h1><p>用真实的起止时间安排科研、会议、实验和个人事务。</p></div><button class="solid-btn" data-action="add-event">＋ 新建日程</button></div><article class="card calendar-card"><div class="calendar-toolbar"><button data-calendar="prev" title="上一周">‹</button><h2 id="calendarRange">本周</h2><button data-calendar="next" title="下一周">›</button><span></span><button class="today-btn" data-calendar="today">回到本周</button></div><div id="calendarWeek"></div></article><article class="card calendar-agenda-card"><div class="card-title"><div><p class="label">本周清单</p><h2>按时间排列</h2></div><span class="count-pill" id="weekEventCount">0 项</span></div><div id="weekAgenda"></div></article></section>
+
+        <section class="page" id="projects"><div class="page-head compact"><div><p class="date-line">统一项目中心</p><h1>所有正在发生的事</h1><p>科研、创业、软件、模型与 DIY，都使用同一套项目结构管理。</p></div><button class="solid-btn" data-action="add-project">＋ 新建项目</button></div><div class="filter-row"><button class="active" data-project-filter="all">全部</button><button data-project-filter="research">科研</button><button data-project-filter="startup">创业 / 产品</button><button data-project-filter="software">软件</button><button data-project-filter="electronics">电子 / PCB</button><button data-project-filter="model">模型</button><button data-project-filter="diy">DIY</button></div><div class="project-grid" id="projectsGrid"></div></section>
+
+        <section class="page" id="papers"><div class="page-head compact"><div><p class="date-line">学习与研究</p><h1>论文与科研</h1><p>这里只展示真实导入或真实检索到的论文，不再使用演示文章。</p></div><div class="head-actions"><button class="outline-btn" data-action="paper-search">⌕ 搜索最新论文</button><button class="solid-btn" data-action="paper-import">＋ 导入论文</button></div></div><div id="papersContainer"></div></section>
+
+        <section class="page" id="english"><div class="page-head compact"><div><p class="date-line">持续积累</p><h1>英语学习</h1><p>把论文阅读中的生词、表达和每日训练连接起来。</p></div><button class="solid-btn" data-action="english-session">＋ 创建学习计划</button></div><div id="englishPlansContainer"></div></section>
+
+        <section class="page" id="briefing"><div class="page-head compact"><div><p class="date-line">AI 个性化情报</p><h1>每日情报</h1><p>管理你的关注主题，自动搜索最新论文与网页资讯。</p></div><div class="head-actions"><button class="solid-btn" data-action="add-topic">＋ 添加主题</button><button class="outline-btn" data-action="refresh-all-topics">✦ 全部刷新</button></div></div><div id="topicStatus" class="briefing-status" hidden></div><div id="topicCardsWrap" class="topic-cards-wrap"><div id="topicCards" class="topic-cards"></div><button class="topic-add-card" data-action="add-topic"><span>＋</span><small>添加主题</small></button></div><div id="topicResults" class="topic-results"></div></section>
+
+        <section class="page" id="diy"><div class="page-head compact"><div><p class="date-line">创作与实验</p><h1>DIY 项目</h1><p>从一个想法，到电路、代码、BOM、测试记录和最终作品。</p></div><button class="solid-btn" data-action="add-diy-project">＋ 新建 DIY 项目</button></div><div class="project-grid" id="diyProjectsContainer"></div></section>
+
+        <section class="page" id="inventory"><div class="page-head compact"><div><p class="date-line">电子实验室</p><h1>元器件仓库</h1><p>一次选择多张购买截图，AI 会逐张识别、合并重复项并自动入库。</p></div><div class="head-actions"><button class="outline-btn" data-action="inventory-import">⇧ 批量截图识别入库</button><button class="solid-btn" data-action="add-part">＋ 手动入库</button><input type="file" id="inventoryFileInput" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden></div></div><div class="inventory-stats"><article><span>▦</span><div><small>库存种类</small><b id="inventoryTypes">0</b></div><em>真实记录</em></article><article><span>⌘</span><div><small>估算总数</small><b id="totalParts">0</b></div><em>件 / 个 / 组</em></article><article><span>!</span><div><small>低库存</small><b class="red" id="lowStockCount">0</b></div><em>数量 ≤ 2</em></article></div><article class="card table-card"><div class="table-tools"><div class="mini-search">⌕ 搜索型号、名称或存放位置</div><button>全部分类⌄</button><button>库存状态⌄</button></div><table><thead><tr><th>元器件</th><th>分类</th><th>规格 / 封装</th><th>存放位置</th><th>库存</th><th>操作</th></tr></thead><tbody id="inventoryBody"></tbody></table></article></section>
+        <section class="page" id="memory"><div class="page-head compact"><div><p class="date-line">长期记忆与适应</p><h1>AI 记忆中心</h1><p>你可以查看、添加和删除 AI 对你的长期了解，所有内容先保存在本机。</p></div><div class="head-actions"><button class="outline-btn" data-action="show-data">打开数据位置</button><button class="solid-btn" data-action="add-memory">＋ 添加记忆</button></div></div><div class="two-col"><article class="card"><div class="card-title"><div><p class="label">已确认的长期记忆</p><h2>AI 在回答时会参考这些内容</h2></div><span class="count-pill" id="memoryCount">0 条</span></div><div class="memory-list" id="memoryList"></div></article><aside><article class="card ai-tip"><span>✦</span><h3>记忆如何工作</h3><p>当你明确说“请记住……”时，AI 可以形成一条待确认记忆。当前版本需要你在这里确认添加；以后可以从你的反馈中发现习惯并提出建议。</p></article><article class="card"><p class="label">隐私原则</p><h3 class="privacy-title">本地优先</h3><p class="privacy-copy">记忆保存在电脑本地。只有在与千问对话时，相关记忆才会作为上下文发送。</p></article></aside></div></section>
+        <section class="page terminal-page" id="terminal"><div class="page-head compact terminal-head"><div><p class="date-line">真实本地终端 · 工作台数据桥</p><h1>Agent 终端</h1><p>Claude 可以通过受控命令读取任务、库存和长期记忆；数据变化会自动同步回界面。</p></div><div class="head-actions"><span class="terminal-status" id="terminalStatus"><i></i>未启动</span><button class="outline-btn" data-action="terminal-context">查看工作台数据</button><button class="outline-btn" data-action="terminal-restart">重启终端</button><button class="solid-btn" data-action="terminal-claude">打开 Claude</button></div></div><article class="terminal-shell"><div class="terminal-toolbar"><span>PowerShell</span><b id="terminalCwd">hacher 项目</b><div></div><button data-action="terminal-clear">清屏</button><button data-action="terminal-stop">结束</button></div><div id="terminalContainer"></div><div class="terminal-help"><span>已连接</span> Claude 会自动读取项目中的 <code>CLAUDE.md</code>。写入操作使用 hacher 数据桥，并在执行前向你确认。</div></article></section>
+      </div>
+    </main>
+  </div>
+
+  <div class="overlay" id="overlay"></div>
+  <aside class="ai-panel" id="aiPanel"><header><div><span>✦</span><div><b>hacher AI</b><small id="panelAIStatus">正在连接千问…</small></div></div><button data-action="close-ai">×</button></header><div class="ai-context"><span>当前上下文</span><b id="aiContext">工作台总览</b></div><div class="chat" id="chat"><div class="ai-message"><span>✦</span><div><p>早上好！我可以参考你的任务、库存和长期记忆与你对话。</p><p>涉及修改数据的操作，我会先给出建议并等待你确认。</p></div></div></div><div class="quick-prompts"><button>帮我安排今天</button><button>查一下 ESP32 库存</button><button>总结研究进展</button></div><div class="chat-attachment" id="chatAttachment" hidden><img id="attachmentPreview" alt="待发送图片"><div><b id="attachmentName"></b><small>图片将随本次问题发送给千问</small></div><button type="button" data-action="remove-attachment">×</button></div><form class="chat-input" id="chatForm"><button class="attach-btn" type="button" data-action="attach-image" title="添加图片">＋</button><textarea id="chatInput" placeholder="告诉 AI 你想完成什么，或添加一张图片…" rows="1"></textarea><button id="sendButton" title="发送">↑</button><input type="file" id="chatFileInput" accept="image/png,image/jpeg,image/webp,image/gif" hidden></form></aside>
+  <div class="modal-wrap" id="modalWrap"><div class="modal" id="modal"><button class="modal-close" data-action="close-modal">×</button><div id="modalContent"></div></div></div>
+  <div class="toast" id="toast"><span>✓</span><p></p></div>
+  <script src="vendor/xterm.js"></script>
+  <script src="vendor/addon-fit.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

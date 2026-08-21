@@ -1,0 +1,49 @@
+{
+  "name": "hacher-workbench",
+  "version": "0.1.0",
+  "description": "hacher 个人智能工作台 Windows 桌面版",
+  "main": "main.cjs",
+  "author": "hacher",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --win portable"
+  },
+  "devDependencies": {
+    "electron": "43.4.1",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "local.hacher.workbench",
+    "productName": "hacher",
+    "asar": true,
+    "files": [
+      "index.html",
+      "styles.css",
+      "app.js",
+      "main.cjs",
+      "preload.cjs",
+      "package.json",
+      "assets/**",
+      "vendor/**",
+      "tools/**",
+      "CLAUDE.md"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "icon": "assets/hacher.ico",
+      "target": [
+        "portable"
+      ],
+      "artifactName": "hacher-${version}.${ext}"
+    }
+  },
+  "dependencies": {
+    "@homebridge/node-pty-prebuilt-multiarch": "^0.14.1",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0"
+  }
+}

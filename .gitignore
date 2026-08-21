@@ -1,0 +1,24 @@
+# 依赖包（别人 clone 后运行 npm install 即可）
+node_modules/
+
+# 构建产物
+release/
+
+# 大型二进制文件
+*.zip
+
+# 操作系统文件
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# 环境变量
+.env
+.env.local
+
+# Claude 本地数据（不含配置）
+.claude/projects/
