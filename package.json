@@ -8,7 +8,8 @@
   "private": true,
   "scripts": {
     "start": "electron .",
-    "pack": "electron-builder --win portable"
+    "prepack": "node tools/prepare-native.cjs",
+    "pack": "node tools/pack.cjs"
   },
   "devDependencies": {
     "electron": "43.4.1",
@@ -18,6 +19,12 @@
     "appId": "local.hacher.workbench",
     "productName": "hacher",
     "asar": true,
+    "electronDist": ".electron-dist",
+    "asarUnpack": [
+      "node_modules/@homebridge/node-pty-prebuilt-multiarch/build/Release/*.node",
+      "node_modules/@homebridge/node-pty-prebuilt-multiarch/third_party/conpty/**"
+    ],
+    "npmRebuild": false,
     "files": [
       "index.html",
       "styles.css",
@@ -28,10 +35,15 @@
       "assets/**",
       "vendor/**",
       "tools/**",
-      "CLAUDE.md"
+      "CLAUDE.md",
+      "!node_modules/@xterm/**",
+      "!node_modules/@homebridge/node-pty-prebuilt-multiarch/prebuilds/**",
+      "!node_modules/@homebridge/node-pty-prebuilt-multiarch/src/**",
+      "!node_modules/@homebridge/node-pty-prebuilt-multiarch/**/*.map",
+      "!node_modules/@homebridge/node-pty-prebuilt-multiarch/**/*.test.js"
     ],
     "directories": {
-      "output": "release"
+      "output": "release-build"
     },
     "win": {
       "icon": "assets/hacher.ico",

@@ -3,6 +3,8 @@ node_modules/
 
 # 构建产物
 release/
+release-build/
+.electron-dist/
 
 # 大型二进制文件
 *.zip

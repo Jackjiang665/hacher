@@ -30,6 +30,15 @@ const h = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;',
 const setCountBadge = (id, count) => { const el=document.getElementById(id); if(el){el.textContent=count;el.hidden=count===0} };
 const updateNotificationIndicator = () => { const el=$('#notificationDot'); if(el)el.hidden=!(tasks.some(t=>!t.done)||inventory.some(p=>Number(p.qty)<=2)); };
 
+function greetingForHour(hour){if(hour>=5&&hour<9)return'早上好';if(hour<12)return'上午好';if(hour<14)return'中午好';if(hour<18)return'下午好';if(hour<23)return'晚上好';return'夜深了'}
+function updateClockGreeting(){
+  const now=new Date();const week=['星期日','星期一','星期二','星期三','星期四','星期五','星期六'];const greeting=greetingForHour(now.getHours());
+  const hasWorkspaceData=tasks.length||projects.length||inventory.length||events.length||papers.length||englishPlans.length||topics.length;
+  const greetingText=$('#dashboardGreetingText');if(greetingText)greetingText.textContent=`${greeting}，${hasWorkspaceData?'继续推进你的工作台':'开始建立你的工作台'}`;
+  const aiWelcome=$('#aiWelcome');if(aiWelcome)aiWelcome.textContent=`${greeting}！我可以参考你的任务、库存和长期记忆与你对话。`;
+  const date=$('#todayDate');if(date)date.textContent=`${now.getFullYear()} 年 ${now.getMonth()+1} 月 ${now.getDate()} 日 · ${week[now.getDay()]}`;
+}
+
 function renderTasks() {
   const openTasks=tasks.filter(t=>!t.done);
   const completedTasks=tasks.filter(t=>t.done).length;
@@ -569,7 +578,7 @@ async function initialize(){
   }
   renderTasks();renderInventory();renderMemories();renderCalendar();renderTopicCards();renderTopicResults();renderEnglishPlans();renderPapers();renderProjects();
   updateNotificationIndicator();
-  const now=new Date();const week=['星期日','星期一','星期二','星期三','星期四','星期五','星期六'];$('#todayDate').textContent=`${now.getFullYear()} 年 ${now.getMonth()+1} 月 ${now.getDate()} 日 · ${week[now.getDay()]}`;
+  updateClockGreeting();setInterval(updateClockGreeting,60*1000);
   window.orbito?.onStateChanged?.(state=>{
     if(Array.isArray(state.tasks))tasks=state.tasks;
     if(Array.isArray(state.inventory))inventory=state.inventory;

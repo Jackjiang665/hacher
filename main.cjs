@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, Tray, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -14,6 +14,7 @@ app.setName('hacher');
 app.setPath('userData', hacherUserData);
 
 let mainWindow;
+let tray = null;
 let terminalProcess = null;
 let stateWatcherStarted = false;
 let lastRendererWriteAt = 0;
@@ -88,6 +89,21 @@ function messageText(content) {
   return '';
 }
 
+function normalizeExternalUrl(value) {
+  try {
+    const url = new URL(String(value || '').trim());
+    if (!['http:', 'https:'].includes(url.protocol)) return '';
+    const host = url.hostname.toLowerCase().replace(/^www\./, '');
+    if (!host || ['example.com', 'example.org', 'example.net', 'localhost'].includes(host) || /\.(example\.com|example\.org|example\.net|localhost|invalid)$/.test(host)) return '';
+    if (/^(127\.|0\.|10\.|192\.168\.|169\.254\.)/.test(host)) return '';
+    const private172 = host.match(/^172\.(\d+)\./);
+    if (private172 && Number(private172[1]) >= 16 && Number(private172[1]) <= 31) return '';
+    return url.href;
+  } catch {
+    return '';
+  }
+}
+
 async function buildArxivQuery(apiKey, requestText) {
   if (/(大模型|语言模型|LLM).*(不确定|置信|校准)|(不确定|置信|校准).*(大模型|语言模型|LLM)/i.test(requestText)) {
     return 'all:"large language model" AND all:uncertainty';
@@ -127,35 +143,29 @@ async function searchArxiv(query) {
 
 async function searchWeb(apiKey, query) {
   try {
-    const response = await fetch('https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', {
+    const response = await fetch('https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: process.env.ORBITO_QWEN_MODEL || 'qwen3.7-plus',
-        messages: [
-          { role: 'system', content: `你是一个信息检索助手。请根据用户的主题，搜索并返回 5-8 条最相关的网页结果。
-每条结果必须包含：title（标题）、url（链接）、summary（一句话摘要）。
-严格以 JSON 数组格式返回，不要任何其他文字。格式：[{"title":"...","url":"...","summary":"..."}]
-如果无法搜索，返回空数组 []。` },
-          { role: 'user', content: `请搜索关于"${query}"的最新信息。` },
-        ],
-        stream: false,
-        enable_thinking: false,
-        enable_search: true,
+        model: process.env.ORBITO_QWEN_SEARCH_MODEL || 'qwen-plus',
+        input: { messages: [{ role: 'user', content: `请搜索关于“${query}”的最新、相关且可追溯的网页资料。` }] },
+        parameters: {
+          result_format: 'message',
+          enable_search: true,
+          search_options: { forced_search: true, enable_source: true, search_strategy: 'max' },
+        },
       }),
     });
     if (!response.ok) return [];
     const data = await response.json();
-    const content = String(data.choices?.[0]?.message?.content || '');
-    const jsonMatch = content.match(/\[[\s\S]*\]/);
-    if (!jsonMatch) return [];
-    const results = JSON.parse(jsonMatch[0]);
-    return results.filter(r => r.title && r.url).map(r => ({
-      source: 'web',
-      title: r.title,
-      url: r.url,
-      summary: r.summary || '',
-    }));
+    const results = Array.isArray(data.output?.search_info?.search_results) ? data.output.search_info.search_results : [];
+    const seen = new Set();
+    return results.map(result => {
+      const url = normalizeExternalUrl(result.url);
+      if (!url || !result.title || seen.has(url)) return null;
+      seen.add(url);
+      return { source: 'web', title: String(result.title).trim(), url, summary: String(result.snippet || result.summary || '').trim(), published: result.publish_time || result.published_time || result.date || '' };
+    }).filter(Boolean).slice(0, 10);
   } catch (error) {
     console.error('Web search failed:', error);
     return [];
@@ -192,6 +202,44 @@ async function runTerminalSmokeTest() {
   }
 }
 
+function createTray() {
+  const iconPath = process.platform === 'win32'
+    ? path.join(__dirname, 'assets', 'hacher.ico')
+    : path.join(__dirname, 'assets', 'hacher-icon.png');
+  tray = new Tray(iconPath);
+  tray.setToolTip('hacher · 个人智能工作台');
+  const contextMenu = Menu.buildFromTemplate([
+    {
+      label: '显示主窗口',
+      click: () => {
+        if (!mainWindow || mainWindow.isDestroyed()) {
+          createWindow();
+        } else {
+          mainWindow.show();
+          mainWindow.focus();
+        }
+      },
+    },
+    { type: 'separator' },
+    {
+      label: '退出',
+      click: () => {
+        app.isQuitting = true;
+        app.quit();
+      },
+    },
+  ]);
+  tray.setContextMenu(contextMenu);
+  tray.on('double-click', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      createWindow();
+    } else {
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  });
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1480,
@@ -210,6 +258,17 @@ function createWindow() {
     },
   });
   mainWindow.loadFile('index.html');
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    const safeUrl = normalizeExternalUrl(url);
+    if (safeUrl) shell.openExternal(safeUrl).catch(error => console.error('Failed to open external URL:', error));
+    return { action: 'deny' };
+  });
+  mainWindow.on('close', (event) => {
+    if (!app.isQuitting) {
+      event.preventDefault();
+      mainWindow.hide();
+    }
+  });
   startStateWatcher();
 }
 
@@ -303,15 +362,35 @@ function repairTopics() {
   }
 }
 
+function repairTopicResults() {
+  const state = readState();
+  if (!Array.isArray(state.topics)) return;
+  let changed = false;
+  for (const topic of state.topics) {
+    if (!Array.isArray(topic.results)) continue;
+    const repaired = topic.results.filter(result => result?.source !== 'web' || Boolean(normalizeExternalUrl(result.url)));
+    if (repaired.length !== topic.results.length) {
+      topic.results = repaired;
+      changed = true;
+    }
+  }
+  if (changed) {
+    writeState(state);
+    console.log('Topic repair: removed unverified placeholder web results.');
+  }
+}
+
 app.whenReady().then(async () => {
   app.setAppUserModelId('local.hacher.workbench');
   migrateTopics();
   repairTopics();
+  repairTopicResults();
   if (process.env.ORBITO_PTY_SMOKE === '1') {
     await runTerminalSmokeTest();
     app.quit();
     return;
   }
+  createTray();
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -322,7 +401,14 @@ app.on('window-all-closed', () => {
   try { terminalProcess?.kill(); } catch {}
   fs.unwatchFile(getDataFile());
   stateWatcherStarted = false;
-  if (process.platform !== 'darwin') app.quit();
+  if (!app.isQuitting) {
+    // 还有托盘图标在，不要退出；用户可通过托盘"退出"真正关闭
+    return;
+  }
+});
+
+app.on('before-quit', () => {
+  app.isQuitting = true;
 });
 
 ipcMain.handle('state:get', () => readState());
