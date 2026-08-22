@@ -33,7 +33,7 @@ function getDataFile() {
 }
 
 function getProjectRoot() {
-  return app.isPackaged ? path.resolve(path.dirname(process.execPath), '..', '..') : __dirname;
+  return app.isPackaged ? path.join(process.resourcesPath, 'app') : __dirname;
 }
 
 function notifyStateChanged() {

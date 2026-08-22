@@ -1,6 +1,6 @@
 {
   "name": "hacher-workbench",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "hacher 个人智能工作台 Windows 桌面版",
   "main": "main.cjs",
   "author": "hacher",
@@ -18,12 +18,8 @@
   "build": {
     "appId": "local.hacher.workbench",
     "productName": "hacher",
-    "asar": true,
+    "asar": false,
     "electronDist": ".electron-dist",
-    "asarUnpack": [
-      "node_modules/@homebridge/node-pty-prebuilt-multiarch/build/Release/*.node",
-      "node_modules/@homebridge/node-pty-prebuilt-multiarch/third_party/conpty/**"
-    ],
     "npmRebuild": false,
     "files": [
       "index.html",
