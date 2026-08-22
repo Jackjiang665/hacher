@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, shell, dialog, Tray, Menu } = require('elec
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const net = require('net');
 const { execFileSync } = require('child_process');
 
 const legacyUserData = path.join(app.getPath('appData'), 'orbito-workbench');
@@ -37,6 +38,56 @@ function getProjectRoot() {
   const sourceRoot = path.resolve(path.dirname(process.execPath), '..', '..');
   if (fs.existsSync(path.join(sourceRoot, 'package.json')) && fs.existsSync(path.join(sourceRoot, 'tools', 'hacher.cjs'))) return sourceRoot;
   return path.join(process.resourcesPath, 'app');
+}
+
+const proxyEnvironmentNames = ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy'];
+
+function getLocalProxyEndpoint(value) {
+  try {
+    const raw = String(value || '').trim();
+    if (!raw) return null;
+    const url = new URL(raw.includes('://') ? raw : `http://${raw}`);
+    const hostname = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+    if (!['127.0.0.1', 'localhost', '::1'].includes(hostname)) return null;
+    const defaults = { 'http:': 80, 'https:': 443, 'socks:': 1080, 'socks5:': 1080 };
+    const port = Number(url.port) || defaults[url.protocol];
+    return Number.isInteger(port) && port > 0 && port <= 65535 ? { hostname, port } : null;
+  } catch {
+    return null;
+  }
+}
+
+function canConnectToLocalProxy({ hostname, port }, timeoutMs = 500) {
+  return new Promise(resolve => {
+    const socket = net.createConnection({ host: hostname, port });
+    let settled = false;
+    const finish = available => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(available);
+    };
+    socket.setTimeout(timeoutMs);
+    socket.once('connect', () => finish(true));
+    socket.once('timeout', () => finish(false));
+    socket.once('error', () => finish(false));
+  });
+}
+
+async function createTerminalEnvironment() {
+  const env = Object.fromEntries(Object.entries(process.env).filter(([, value]) => typeof value === 'string'));
+  const checks = new Map();
+  const ignoredProxies = [];
+  await Promise.all(proxyEnvironmentNames.map(async name => {
+    const endpoint = getLocalProxyEndpoint(env[name]);
+    if (!endpoint) return;
+    const id = `${endpoint.hostname}:${endpoint.port}`;
+    if (!checks.has(id)) checks.set(id, canConnectToLocalProxy(endpoint));
+    if (await checks.get(id)) return;
+    delete env[name];
+    ignoredProxies.push({ name, endpoint: id });
+  }));
+  return { env, ignoredProxies };
 }
 
 function notifyStateChanged() {
@@ -212,8 +263,9 @@ async function runTerminalSmokeTest() {
   try {
     const pty = require('@homebridge/node-pty-prebuilt-multiarch');
     const cwd = getProjectRoot();
+    const { env, ignoredProxies } = await createTerminalEnvironment();
     const result = await new Promise(resolve => {
-      const proc = pty.spawn('powershell.exe', ['-NoLogo', '-NoProfile', '-Command', 'Write-Output ORBITO_PTY_OK; claude --version'], { cols: 80, rows: 24, cwd });
+      const proc = pty.spawn('powershell.exe', ['-NoLogo', '-NoProfile', '-Command', 'Write-Output ORBITO_PTY_OK; claude --version'], { cols: 80, rows: 24, cwd, env });
       let output = '';
       const timer = setTimeout(() => { try { proc.kill(); } catch {} resolve({ ok: false, error: 'timeout' }); }, 8000);
       proc.onData(data => { output += data; });
@@ -223,6 +275,7 @@ async function runTerminalSmokeTest() {
           ok: output.includes('ORBITO_PTY_OK'),
           claude: output.includes('Claude Code'),
           cwd,
+          ignoredProxies,
           output: output.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '').trim()
         });
       });
@@ -623,14 +676,14 @@ ipcMain.handle('briefing:generate', async (_event, topicId) => {
   }
 });
 
-ipcMain.handle('terminal:start', (_event, options = {}) => {
+ipcMain.handle('terminal:start', async (_event, options = {}) => {
   try {
     terminalProcess?.kill();
     const pty = require('@homebridge/node-pty-prebuilt-multiarch');
     const cols = Math.max(40, Math.min(240, Number(options.cols) || 120));
     const rows = Math.max(12, Math.min(100, Number(options.rows) || 32));
     const cwd = getProjectRoot();
-    const env = Object.fromEntries(Object.entries(process.env).filter(([, value]) => typeof value === 'string'));
+    const { env, ignoredProxies } = await createTerminalEnvironment();
     terminalProcess = pty.spawn('powershell.exe', ['-NoLogo', '-NoExit'], {
       name: 'xterm-256color', cols, rows, cwd,
       env: { ...env, TERM: 'xterm-256color', HACHER_DATA_FILE: getDataFile(), HACHER_PROJECT_ROOT: cwd },
@@ -643,7 +696,7 @@ ipcMain.handle('terminal:start', (_event, options = {}) => {
       terminalProcess = null;
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('terminal:exit', event);
     });
-    return { ok: true, cwd, pid: terminalProcess.pid };
+    return { ok: true, cwd, pid: terminalProcess.pid, ignoredProxies };
   } catch (error) {
     terminalProcess = null;
     return { ok: false, error: error.message };

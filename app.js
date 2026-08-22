@@ -329,7 +329,7 @@ async function initTerminal(force=false){
     const observer=new ResizeObserver(()=>{if(!fitAddon||!xterm)return;fitAddon.fit();if(terminalStarted)window.orbito.terminalResize(xterm.cols,xterm.rows)});observer.observe($('#terminalContainer'));
   }
   if(terminalStarted&&!force){fitAddon.fit();xterm.focus();return true}
-  terminalStartPromise=(async()=>{if(force){await window.orbito.terminalKill();xterm.reset()}setTerminalStatus(false,'正在启动…');fitAddon.fit();const result=await window.orbito.terminalStart({cols:xterm.cols,rows:xterm.rows});if(!result.ok){setTerminalStatus(false,'启动失败');xterm.writeln(`\x1b[31m终端启动失败：${result.error}\x1b[0m`);return false}terminalStarted=true;$('#terminalCwd').textContent=result.cwd;setTerminalStatus(true,'运行中');xterm.focus();return true})();
+  terminalStartPromise=(async()=>{if(force){await window.orbito.terminalKill();xterm.reset()}setTerminalStatus(false,'正在启动…');fitAddon.fit();const result=await window.orbito.terminalStart({cols:xterm.cols,rows:xterm.rows});if(!result.ok){setTerminalStatus(false,'启动失败');xterm.writeln(`\x1b[31m终端启动失败：${result.error}\x1b[0m`);return false}terminalStarted=true;$('#terminalCwd').textContent=result.cwd;if(result.ignoredProxies?.length){const endpoints=[...new Set(result.ignoredProxies.map(item=>item.endpoint))].join('、');xterm.writeln(`\x1b[33m[已忽略未运行的本地代理 ${endpoints}，终端将尝试直连]\x1b[0m\r\n`)}setTerminalStatus(true,'运行中');xterm.focus();return true})();
   try{return await terminalStartPromise}finally{terminalStartPromise=null}
 }
 
