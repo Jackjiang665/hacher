@@ -1,6 +1,6 @@
 {
   "name": "hacher-workbench",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "hacher 个人智能工作台 Windows 桌面版",
   "main": "main.cjs",
   "author": "hacher",
@@ -44,9 +44,17 @@
     "win": {
       "icon": "assets/hacher.ico",
       "target": [
-        "portable"
+        "nsis"
       ],
-      "artifactName": "hacher-${version}.${ext}"
+      "artifactName": "hacher-setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "hacher",
+      "deleteAppDataOnUninstall": false
     }
   },
   "dependencies": {

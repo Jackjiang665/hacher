@@ -9,7 +9,7 @@ const env = {
     || 'https://npmmirror.com/mirrors/electron-builder-binaries/',
 };
 
-const result = spawnSync(process.execPath, [cli, '--win', 'portable'], {
+const result = spawnSync(process.execPath, [cli, '--win', 'nsis'], {
   cwd: root,
   env,
   stdio: 'inherit',

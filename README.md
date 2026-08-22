@@ -108,9 +108,9 @@ node tools/hacher.cjs topic list
 
 ## 下载与首次使用
 
-### 下载便携版
+### 下载并安装
 
-前往 [Releases](https://github.com/Jackjiang665/hacher/releases/latest) 下载最新的 `hacher-*.exe`。当前发布版面向 Windows x64，双击即可运行，无需安装。
+前往 [Releases](https://github.com/Jackjiang665/hacher/releases/latest) 下载最新的 `hacher-setup-*.exe`。当前发布版面向 Windows x64，运行安装程序后可使用默认目录，也可以选择其他固定安装位置。安装程序会创建桌面和开始菜单快捷方式；应用与终端工作目录不会再使用随机临时路径。
 
 ### 配置千问 API
 
@@ -159,7 +159,7 @@ node tools/prepare-native.cjs
 # 启动开发模式
 npm start
 
-# 打包便携版 EXE
+# 打包 Windows 安装程序
 npm run pack
 ```
 
@@ -172,7 +172,7 @@ npm run pack
 - [node-pty](https://github.com/nicedoc/nicedoc) — 真实 PowerShell 伪终端
 - 阿里云百炼 / 千问 — 对话、视觉识别和联网搜索
 - [arXiv API](https://info.arxiv.org/help/api/) — 真实论文检索
-- [electron-builder](https://www.electron.build/) — Windows 便携版打包
+- [electron-builder](https://www.electron.build/) — Windows NSIS 安装程序打包
 
 ## License
 

@@ -33,7 +33,10 @@ function getDataFile() {
 }
 
 function getProjectRoot() {
-  return app.isPackaged ? path.join(process.resourcesPath, 'app') : __dirname;
+  if (!app.isPackaged) return __dirname;
+  const sourceRoot = path.resolve(path.dirname(process.execPath), '..', '..');
+  if (fs.existsSync(path.join(sourceRoot, 'package.json')) && fs.existsSync(path.join(sourceRoot, 'tools', 'hacher.cjs'))) return sourceRoot;
+  return path.join(process.resourcesPath, 'app');
 }
 
 function notifyStateChanged() {
@@ -208,8 +211,9 @@ async function runTerminalSmokeTest() {
   const resultFile = path.join(app.getPath('userData'), 'terminal-smoke.json');
   try {
     const pty = require('@homebridge/node-pty-prebuilt-multiarch');
+    const cwd = getProjectRoot();
     const result = await new Promise(resolve => {
-      const proc = pty.spawn('powershell.exe', ['-NoLogo', '-NoProfile', '-Command', 'Write-Output ORBITO_PTY_OK; claude --version'], { cols: 80, rows: 24 });
+      const proc = pty.spawn('powershell.exe', ['-NoLogo', '-NoProfile', '-Command', 'Write-Output ORBITO_PTY_OK; claude --version'], { cols: 80, rows: 24, cwd });
       let output = '';
       const timer = setTimeout(() => { try { proc.kill(); } catch {} resolve({ ok: false, error: 'timeout' }); }, 8000);
       proc.onData(data => { output += data; });
@@ -218,6 +222,7 @@ async function runTerminalSmokeTest() {
         resolve({
           ok: output.includes('ORBITO_PTY_OK'),
           claude: output.includes('Claude Code'),
+          cwd,
           output: output.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '').trim()
         });
       });
