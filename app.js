@@ -397,7 +397,38 @@ function dailyPlan(){openAI();simulateAI('请只根据我工作台中当前真�
 
 function notificationsModal(){const open=tasks.filter(t=>!t.done);const low=inventory.filter(p=>Number(p.qty)<=2);const rows=[...open.slice(0,3).map(t=>`<div class="result-row"><b>待办</b><span>${h(t.title)}</span><span>${h(t.time)}</span></div>`),...low.slice(0,3).map(p=>`<div class="result-row"><b>库存</b><span>${h(p.name)}</span><span>剩余 ${p.qty}</span></div>`)];showModal(`<div class="modal-icon">♢</div><h2>通知</h2><p>这里只显示根据真实任务和库存生成的提醒。</p>${rows.length?`<div class="result-box">${rows.join('')}</div>`:'<div class="empty-state small"><b>目前没有通知</b><small>新增待办或库存记录后，相关提醒会出现在这里</small></div>'}<div class="modal-actions"><button class="confirm" data-action="read-notifications">全部已读</button></div>`)}
 
-function profileModal(){showModal(`<div class="modal-icon">XY</div><h2>我的工作区</h2><p>当前为单人、本地优先模式。账户与多端同步将在后续版本加入。</p><div class="result-box"><p><b>AI 状态：</b>${aiConfigured?'千问已连接':'未检测到 API Key'}</p><p><b>数据存储：</b>本机应用数据目录</p><p><b>长期记忆：</b>${memories.length} 条</p><p><b>未完成任务：</b>${tasks.filter(t=>!t.done).length} 项</p></div><div class="modal-actions"><button class="cancel" data-action="show-data">打开数据位置</button><button class="confirm" data-action="close-modal">完成</button></div>`)}
+function profileModal(){showModal(`<div class="modal-icon">XY</div><h2>我的工作区</h2><p>当前为单人、本地优先模式。账户与多端同步将在后续版本加入。</p><div class="result-box"><p><b>AI 状态：</b>${aiConfigured?'千问已连接':'未检测到 API Key'}</p><p><b>数据存储：</b>本机应用数据目录</p><p><b>长期记忆：</b>${memories.length} 条</p><p><b>未完成任务：</b>${tasks.filter(t=>!t.done).length} 项</p></div><div class="workspace-settings"><button type="button" data-action="api-settings"><span>🔑</span><div><b>千问 API 设置</b><small>${aiConfigured?'更换 Key 或调整模型':'填写自己的 Key 以启用 AI'}</small></div><i>›</i></button></div><div class="modal-actions"><button class="cancel" data-action="show-data">打开数据位置</button><button class="confirm" data-action="close-modal">完成</button></div>`)}
+
+async function apiSettingsModal(){
+  let status={configured:aiConfigured,model:'qwen3.7-plus'};
+  try{status=await window.orbito?.getAIStatus()||status}catch(error){console.error(error)}
+  showModal(`<div class="modal-icon">🔑</div><h2>千问 API 设置</h2><p>配置你自己的阿里云百炼 API Key。Key 只保存在当前 Windows 用户的本机配置中，不会写入项目数据或上传到 GitHub。</p><div class="api-status ${status.configured?'connected':''}"><span></span><b>${status.configured?'已连接':'尚未配置'}</b><small>${status.configured?'留空 Key 可保留当前配置':'首次使用必须填写 API Key'}</small></div><div class="form-grid"><div class="form-field full"><label>API Key</label><input id="apiSettingsKey" type="password" placeholder="${status.configured?'已保存，如需更换请填写新 Key':'sk-xxxxxxxxxxxxxxxx'}" autocomplete="new-password" spellcheck="false"></div><div class="form-field full"><label>模型</label><input id="apiSettingsModel" value="${h(status.model||'qwen3.7-plus')}" placeholder="qwen3.7-plus" spellcheck="false"></div></div><a class="api-help-link" href="https://bailian.console.aliyun.com/#/api-key" target="_blank" rel="noreferrer">前往阿里云百炼获取 API Key →</a><div class="modal-actions">${status.configured?'<button class="danger-modal-btn" data-action="clear-api-key">清除 Key</button>':''}<button class="cancel" data-action="profile">返回</button><button class="confirm" data-action="save-api-settings">保存配置</button></div>`);
+  setTimeout(()=>$('#apiSettingsKey')?.focus(),100);
+}
+
+async function refreshAIStatus(){
+  const status=await window.orbito.getAIStatus();
+  aiConfigured=status.configured;
+  $('#panelAIStatus').textContent=status.configured?`千问 ${status.model} · 本地记忆已启用`:'离线模式 · 未检测到 API Key';
+  $('#aiSetup')?.classList.toggle('show',!status.configured);
+  return status;
+}
+
+async function saveAPISettings(){
+  const button=$('[data-action="save-api-settings"]');
+  const key=$('#apiSettingsKey')?.value.trim()||'';const model=$('#apiSettingsModel')?.value.trim()||'';
+  if(button){button.disabled=true;button.textContent='保存中…'}
+  try{
+    const result=await window.orbito.saveAISettings({key,model});
+    if(!result.ok){showToast(result.error||'保存失败');return}
+    await refreshAIStatus();showToast('API 配置已保存并立即生效');profileModal();
+  }catch(error){showToast('保存失败：'+error.message)}finally{if(button){button.disabled=false;button.textContent='保存配置'}}
+}
+
+async function clearAPIKey(){
+  if(!window.confirm('确定清除本机保存的千问 API Key？清除后 AI 功能将切换为离线模式。'))return;
+  try{const result=await window.orbito.clearAIKey();if(!result.ok){showToast(result.error||'清除失败');return}await refreshAIStatus();showToast('API Key 已从本机清除');apiSettingsModal()}catch(error){showToast('清除失败：'+error.message)}
+}
 
 function searchModal(){const items=[...tasks.map(t=>`<button data-view-link="today">${h(t.title)} <small>待办</small></button>`),...inventory.map(p=>`<button data-view-link="inventory">${h(p.name)} <small>元件</small></button>`)];showModal(`<div class="modal-icon">⌕</div><h2>全局搜索</h2><p>只搜索已经录入工作台的真实内容。</p><div class="form-field full"><input id="searchInput" placeholder="输入关键词…"></div>${items.length?`<div class="result-box search-results">${items.join('')}</div>`:'<div class="empty-state small"><b>还没有可搜索的数据</b><small>先创建任务、项目或库存记录</small></div>'}<div class="modal-actions"><button class="confirm" data-action="close-modal">关闭</button></div>`);setTimeout(()=>$('#searchInput')?.focus(),100)}
 
@@ -536,7 +567,7 @@ document.addEventListener('click',e=>{
     'quick-add':()=>formModal('task'),'add-task':()=>formModal('task'),'add-event':()=>eventModal(),'save-event':saveEvent,'add-project':()=>projectModal(),'add-diy-project':()=>projectModal('diy'),'save-project':saveProject,'add-part':()=>formModal('part'),'add-memory':memoryModal,
     'daily-plan':dailyPlan,'paper-search':paperSearchModal,'execute-paper-search':()=>{const topic=$('#paperTopic')?.value?.trim();if(!topic){showToast('请输入研究主题');return}closeModal();openAI();simulateAI(`请实时搜索与“${topic}”相关的最新论文。只列出这次真实检索返回的结果，并给出题目、作者、提交日期和可访问链接；不要虚构，也不要声称已经加入待办。`)},
     'upload':()=>$('#fileInput').click(),'inventory-import':()=>$('#inventoryFileInput').click(),'save-part-edit':savePartEdit,'paper-import':importPapers,'attach-image':()=>$('#chatFileInput').click(),'remove-attachment':removeAttachment,'inbox':()=>{closeModal();switchView('dashboard');setTimeout(()=>document.querySelector('.drop-zone').scrollIntoView({behavior:'smooth',block:'center'}),120)},
-    'search':searchModal,'notifications':notificationsModal,'profile':profileModal,'read-notifications':()=>{const dot=document.querySelector('#notificationDot');if(dot)dot.hidden=true;closeModal();showToast('通知已全部标记为已读')},
+    'search':searchModal,'notifications':notificationsModal,'profile':profileModal,'api-settings':apiSettingsModal,'save-api-settings':saveAPISettings,'clear-api-key':clearAPIKey,'read-notifications':()=>{const dot=document.querySelector('#notificationDot');if(dot)dot.hidden=true;closeModal();showToast('通知已全部标记为已读')},
     'add-purchase':()=>showToast('已加入待确认采购清单'),'paper-save':()=>showToast('已加入待读列表'),'create-insight':()=>showToast('已保存为产品洞察'),
     'english-session':englishPlanModal,'save-english-plan':createEnglishPlan,'add-topic':addTopicModal,'refresh-all-topics':refreshAllTopics,'brief-read':()=>showToast('后续版本可调用语音模型朗读'),'project-open':()=>showToast('项目详情将在后续版本展开'),'show-data':()=>window.orbito?.showDataFolder(),
     'terminal-restart':()=>initTerminal(true),'terminal-claude':openClaude,'terminal-context':showTerminalContext,'terminal-clear':()=>{xterm?.clear();xterm?.focus()},'terminal-stop':async()=>{await window.orbito?.terminalKill();terminalStarted=false;setTerminalStatus(false,'已结束')}
@@ -550,6 +581,7 @@ $('#inventoryFileInput').addEventListener('change',e=>{const files=[...e.target.
 $('#chatFileInput').addEventListener('change',e=>setAttachment(e.target.files[0]));
 $('#chatForm').addEventListener('submit',e=>{e.preventDefault();const v=$('#chatInput').value.trim();if(v||pendingAttachment){const attachment=pendingAttachment;removeAttachment();simulateAI(v,attachment);$('#chatInput').value=''}});
 $$('.quick-prompts button').forEach(b=>b.addEventListener('click',()=>simulateAI(b.textContent)));
+$('#aiSetupForm')?.addEventListener('submit',async e=>{e.preventDefault();const input=$('#aiKeyInput');const key=input?.value?.trim();if(!key){showToast('请输入 API Key');return}const btn=e.target.querySelector('.ai-setup-save');btn.textContent='保存中…';btn.disabled=true;try{const result=await window.orbito.saveAIKey(key);if(result.ok){showToast('AI Key 已保存，正在启用…');input.value='';await refreshAIStatus()}else{showToast(result.error||'保存失败')}}catch(err){showToast('保存失败：'+err.message)}finally{btn.textContent='保存并启用';btn.disabled=false}});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeAI();closeModal()}if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();showToast('输入关键词即可搜索整个工作台')}if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='n'){e.preventDefault();formModal('task')}});
 
 async function initialize(){
@@ -570,9 +602,7 @@ async function initialize(){
       if(Array.isArray(state.papers))papers=state.papers;
       if(Array.isArray(state.events))events=state.events;
       if(Array.isArray(state.projects))projects=state.projects;
-      const status=await window.orbito.getAIStatus();
-      aiConfigured=status.configured;
-      $('#panelAIStatus').textContent=status.configured?`千问 ${status.model} · 本地记忆已启用`:'离线模式 · 未检测到 API Key';
+      await refreshAIStatus();
       if(!state.tasks)await saveState();
     }catch(error){console.error(error);}
   }

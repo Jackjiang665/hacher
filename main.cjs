@@ -79,6 +79,32 @@ function getDashscopeKey() {
   }
 }
 
+function setUserEnvironmentValue(name, value) {
+  if (process.platform !== 'win32') throw new Error('仅支持在 Windows 上写入本机配置');
+  execFileSync('reg.exe', ['add', 'HKCU\\Environment', '/v', name, '/t', 'REG_SZ', '/d', value, '/f'], { windowsHide: true, stdio: 'ignore' });
+  process.env[name] = value;
+}
+
+function deleteUserEnvironmentValue(name) {
+  if (process.platform !== 'win32') throw new Error('仅支持在 Windows 上修改本机配置');
+  try {
+    execFileSync('reg.exe', ['delete', 'HKCU\\Environment', '/v', name, '/f'], { windowsHide: true, stdio: 'ignore' });
+  } catch {
+    // The value may already be absent; clearing the current process is enough.
+  }
+  delete process.env[name];
+}
+
+function validateDashscopeKey(value) {
+  const key = String(value || '').trim();
+  return /^sk-[a-zA-Z0-9_-]{10,}$/.test(key) ? key : '';
+}
+
+function validateModel(value) {
+  const model = String(value || '').trim();
+  return /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,99}$/.test(model) ? model : '';
+}
+
 function decodeXml(value = '') {
   return value.replace(/<[^>]+>/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/\s+/g, ' ').trim();
 }
@@ -479,6 +505,43 @@ ipcMain.handle('ai:status', () => ({
   configured: Boolean(getDashscopeKey()),
   model: process.env.ORBITO_QWEN_MODEL || 'qwen3.7-plus',
 }));
+
+ipcMain.handle('ai:save-key', (_event, key) => {
+  const trimmed = validateDashscopeKey(key);
+  if (!trimmed) {
+    return { ok: false, error: 'Key 格式不正确，应以 sk- 开头' };
+  }
+  try {
+    setUserEnvironmentValue('DASHSCOPE_API_KEY', trimmed);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+});
+
+ipcMain.handle('ai:save-settings', (_event, settings = {}) => {
+  const keyInput = String(settings.key || '').trim();
+  const model = validateModel(settings.model || 'qwen3.7-plus');
+  if (keyInput && !validateDashscopeKey(keyInput)) return { ok: false, error: 'Key 格式不正确，应以 sk- 开头' };
+  if (!model) return { ok: false, error: '模型名称格式不正确' };
+  if (!keyInput && !getDashscopeKey()) return { ok: false, error: '首次配置时必须填写 API Key' };
+  try {
+    if (keyInput) setUserEnvironmentValue('DASHSCOPE_API_KEY', keyInput);
+    setUserEnvironmentValue('ORBITO_QWEN_MODEL', model);
+    return { ok: true, configured: true, model };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+});
+
+ipcMain.handle('ai:clear-key', () => {
+  try {
+    deleteUserEnvironmentValue('DASHSCOPE_API_KEY');
+    return { ok: true, configured: false, model: process.env.ORBITO_QWEN_MODEL || 'qwen3.7-plus' };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+});
 
 ipcMain.handle('topic:add', (_event, name) => {
   if (!name || !String(name).trim()) throw new Error('主题名称不能为空');
