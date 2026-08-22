@@ -1,6 +1,6 @@
 {
   "name": "hacher-workbench",
-  "version": "0.1.0",
+  "version": "1.2.0",
   "description": "hacher 个人智能工作台 Windows 桌面版",
   "main": "main.cjs",
   "author": "hacher",
