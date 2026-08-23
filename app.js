@@ -12,10 +12,12 @@ let events = [];
 let projects = [];
 let editingEventId = null;
 let editingProjectId = null;
+let activeProjectId = null;
 let activeTopicId = null;
 let aiConfigured = false;
 let taskFilter = 'all';
 let projectFilter = 'all';
+let autoBriefingRunning = false;
 function getWeekStart(value = new Date()) { const date=new Date(value);const day=date.getDay()||7;date.setHours(0,0,0,0);date.setDate(date.getDate()-day+1);return date }
 let calendarStart = getWeekStart();
 let pendingAttachment = null;
@@ -57,15 +59,26 @@ function renderTasks() {
 
 const projectTypeLabels={research:'科研项目',startup:'创业 / 产品',software:'软件开发',electronics:'电子 / PCB',model:'模型研究',diy:'DIY / 创作',other:'其他'};
 const projectStatusLabels={idea:'想法',planning:'规划中',active:'进行中',paused:'已暂停',completed:'已完成'};
+const projectFileCategoryLabels={circuit:'电路图',bom:'BOM 表',schematic:'原理图',model:'3D 模型',code:'软件代码',paper:'论文资料',contract:'合同文档',test:'测试记录',other:'其他资料'};
 function projectCard(project){
-  const tags=Array.isArray(project.tags)?project.tags:[];const progress=Math.max(0,Math.min(100,Number(project.progress)||0));
-  return `<article class="project-card" data-category="${h(project.type||'other')}"><div><span class="project-type-dot">${project.type==='diy'?'◇':'▦'}</span><em>${h(projectTypeLabels[project.type]||'其他')} · ${h(projectStatusLabels[project.status]||'规划中')}</em><button data-project-open="${h(project.id)}" title="编辑项目">•••</button></div><h2>${h(project.name)}</h2><p>${h(project.description||'还没有补充项目说明。')}</p>${tags.length?`<div class="tags">${tags.slice(0,4).map(tag=>`<span>${h(tag)}</span>`).join('')}</div>`:'<div class="tags"><span>暂无标签</span></div>'}<div class="project-foot"><div class="progress"><i style="width:${progress}%"></i></div><b>${progress}%</b></div></article>`
+  const tags=Array.isArray(project.tags)?project.tags:[];const progress=Math.max(0,Math.min(100,Number(project.progress)||0));const fileCount=Array.isArray(project.files)?project.files.length:0;const logCount=Array.isArray(project.logs)?project.logs.length:0;
+  return `<article class="project-card" data-category="${h(project.type||'other')}" data-project-open="${h(project.id)}"><div><span class="project-type-dot">${project.type==='diy'?'◇':'▦'}</span><em>${h(projectTypeLabels[project.type]||'其他')} · ${h(projectStatusLabels[project.status]||'规划中')}</em><button data-project-edit="${h(project.id)}" title="编辑项目">•••</button></div><h2>${h(project.name)}</h2><p>${h(project.description||'还没有补充项目说明。')}</p>${tags.length?`<div class="tags">${tags.slice(0,4).map(tag=>`<span>${h(tag)}</span>`).join('')}</div>`:'<div class="tags"><span>暂无标签</span></div>'}<div class="project-card-counts"><span>▤ ${fileCount} 份资料</span><span>◷ ${logCount} 条日志</span></div><div class="project-foot"><div class="progress"><i style="width:${progress}%"></i></div><b>${progress}%</b></div></article>`
 }
 function renderProjects(){
   const visible=projects.filter(project=>projectFilter==='all'||project.type===projectFilter);
   const grid=$('#projectsGrid');if(grid)grid.innerHTML=`${visible.map(projectCard).join('')}<button class="new-project" data-action="add-project"><span>＋</span><b>${projects.length?'新建项目':'创建第一个项目'}</b><small>从想法开始，逐步补充进度与上下文</small></button>`;
   const diy=projects.filter(project=>project.type==='diy');const diyContainer=$('#diyProjectsContainer');if(diyContainer)diyContainer.innerHTML=diy.length?`${diy.map(projectCard).join('')}<button class="new-project" data-action="add-diy-project"><span>＋</span><b>新建 DIY 项目</b><small>记录电路、代码、BOM 与测试过程</small></button>`:'<article class="card project-empty-card"><div class="empty-state"><span>◇</span><b>还没有 DIY 项目</b><small>新建项目后再逐步加入电路、软件、BOM 和实验记录</small><button data-action="add-diy-project">创建第一个 DIY 项目</button></div></article>';
   const dashboard=$('#dashboardProjects');if(dashboard)dashboard.innerHTML=projects.length?`<div class="dashboard-project-list">${projects.slice(0,3).map(project=>`<button data-project-open="${h(project.id)}"><span><b>${h(project.name)}</b><small>${h(projectTypeLabels[project.type]||'其他')} · ${h(projectStatusLabels[project.status]||'规划中')}</small></span><em>${Math.max(0,Math.min(100,Number(project.progress)||0))}%</em></button>`).join('')}</div>`:'<div class="empty-state"><span>▦</span><b>还没有项目</b><small>科研、创业、软件和 DIY 项目都可以从这里开始</small><button data-action="add-project">创建第一个项目</button></div>';
+}
+
+function renderDashboardBriefing(){
+  const card=$('#dashboardBriefing');if(!card)return;
+  if(!topics.length){card.innerHTML='<div class="ai-badge">✦</div><p class="label light">AI 晨间简报</p><h2>尚未设置主题</h2><p class="brief-copy">添加关注主题后，系统会每天检索真实论文与网页资讯。</p><button data-view-link="briefing">设置关注主题 <span>→</span></button>';return}
+  const searched=topics.filter(topic=>topic.searchedAt).sort((a,b)=>new Date(b.searchedAt)-new Date(a.searchedAt));
+  const latest=searched[0];
+  if(!latest){card.innerHTML='<div class="ai-badge">✦</div><p class="label light">AI 晨间简报</p><h2>等待首次更新</h2><p class="brief-copy">已经设置关注主题，点击进入每日情报即可立即刷新。</p><button data-view-link="briefing">立即生成 <span>→</span></button>';return}
+  const total=topics.reduce((sum,topic)=>sum+(Array.isArray(topic.results)?topic.results.length:0),0);const result=Array.isArray(latest.results)?latest.results[0]:null;const today=localDateKey(latest.searchedAt)===localDateKey();const time=new Date(latest.searchedAt).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});
+  card.innerHTML=`<div class="ai-badge">✦</div><p class="label light">AI 晨间简报 · ${h(today?'今日已更新':`上次 ${time}`)}</p><h2>${h(latest.name)}</h2><p class="brief-copy">${result?h(result.title||result.summary||'已取得最新情报'):h('本次搜索暂未返回结果')}<small>${topics.length} 个主题 · ${total} 条真实来源</small></p><button data-view-link="briefing">查看每日情报 <span>→</span></button>`;
 }
 
 function renderInventory() {
@@ -243,17 +256,22 @@ function renderBriefings() {
 
 async function autoBriefing() {
   // Run auto-search for each topic, but only once per day
-  if (!aiConfigured || !topics.length) return;
+  if (autoBriefingRunning || !aiConfigured || !topics.length) { renderDashboardBriefing(); return; }
   const dateKey = value => { const d=new Date(value);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}` };
   const today = dateKey(new Date());
   const pendingTopics = topics.filter(t => !t.searchedAt || dateKey(t.searchedAt) !== today);
-  if (!pendingTopics.length) return;
+  if (!pendingTopics.length) { renderDashboardBriefing(); return; }
+  autoBriefingRunning = true;
   setTopicStatus('searching', `正在搜索 ${pendingTopics.length} 个关注主题…`);
+  let succeeded = 0;
+  const failures = [];
   for (const topic of pendingTopics) {
     try {
       await window.orbito.generateTopicBriefing(topic.id);
+      succeeded++;
     } catch (err) {
       console.error(`Briefing search failed for "${topic.name}":`, err);
+      failures.push(topic.name);
     }
   }
   // Reload state after search
@@ -263,10 +281,13 @@ async function autoBriefing() {
     if (Array.isArray(state.briefings)) briefings = state.briefings;
     renderTopicCards();
     renderTopicResults();
-    setTopicStatus('done', `已更新 ${topics.length} 个主题的情报`);
+    renderDashboardBriefing();
+    setTopicStatus(failures.length?'error':'done', failures.length?`已更新 ${succeeded} 个主题，${failures.length} 个失败，可稍后重试`:`已更新 ${succeeded} 个主题的情报`);
     setTimeout(() => setTopicStatus('', ''), 3000);
   } catch (err) {
     setTopicStatus('error', `更新情报时出错：${err.message}`);
+  } finally {
+    autoBriefingRunning = false;
   }
 }
 
@@ -296,6 +317,7 @@ async function refreshAllTopics() {
   if (Array.isArray(state.briefings)) briefings = state.briefings;
   renderTopicCards();
   renderTopicResults();
+  renderDashboardBriefing();
   setTopicStatus('done', `情报已生成`);
   setTimeout(() => setTopicStatus('', ''), 3000);
 }
@@ -338,8 +360,8 @@ async function openClaude(){switchView('terminal');const ok=await initTerminal()
 async function showTerminalContext(){switchView('terminal');const ok=await initTerminal();if(ok)window.orbito.terminalWrite('node tools/hacher.cjs context\r')}
 
 function showToast(text){const t=$('#toast');t.querySelector('p').textContent=text;t.classList.add('show');clearTimeout(showToast.timer);showToast.timer=setTimeout(()=>t.classList.remove('show'),2300)}
-function showModal(html){$('#modalContent').innerHTML=html;$('#modalWrap').classList.add('show');$('#overlay').classList.add('show')}
-function closeModal(){ $('#modalWrap').classList.remove('show'); if(!$('#aiPanel').classList.contains('open'))$('#overlay').classList.remove('show') }
+function showModal(html,wide=false){$('#modalContent').innerHTML=html;$('#modal').classList.toggle('project-detail-modal',wide);$('#modalWrap').classList.add('show');$('#overlay').classList.add('show')}
+function closeModal(){ $('#modalWrap').classList.remove('show');$('#modal').classList.remove('project-detail-modal'); if(!$('#aiPanel').classList.contains('open'))$('#overlay').classList.remove('show') }
 function openAI(){ $('#aiPanel').classList.add('open');$('#overlay').classList.add('show');setTimeout(()=>$('#chatInput').focus(),250) }
 function closeAI(){ $('#aiPanel').classList.remove('open');if(!$('#modalWrap').classList.contains('show'))$('#overlay').classList.remove('show') }
 
@@ -367,8 +389,35 @@ function projectModal(defaultType='',projectId=null){
 
 async function saveProject(){
   const name=$('#projectName')?.value.trim();if(!name){showToast('请输入项目名称');return}const existing=editingProjectId?projects.find(item=>String(item.id)===String(editingProjectId)):null;
-  const next={id:editingProjectId||Date.now(),name,type:$('#projectType')?.value||'other',status:$('#projectStatus')?.value||'planning',progress:Math.max(0,Math.min(100,Math.round(Number($('#projectProgress')?.value)||0))),tags:($('#projectTags')?.value||'').split(/[,，]/).map(tag=>tag.trim()).filter(Boolean).slice(0,12),description:$('#projectDescription')?.value.trim()||'',createdAt:existing?.createdAt||new Date().toISOString(),updatedAt:new Date().toISOString()};
+  const next={...(existing||{}),id:editingProjectId||Date.now(),name,type:$('#projectType')?.value||'other',status:$('#projectStatus')?.value||'planning',progress:Math.max(0,Math.min(100,Math.round(Number($('#projectProgress')?.value)||0))),tags:($('#projectTags')?.value||'').split(/[,，]/).map(tag=>tag.trim()).filter(Boolean).slice(0,12),description:$('#projectDescription')?.value.trim()||'',files:Array.isArray(existing?.files)?existing.files:[],logs:Array.isArray(existing?.logs)?existing.logs:[],createdAt:existing?.createdAt||new Date().toISOString(),updatedAt:new Date().toISOString()};
   if(editingProjectId)projects=projects.map(item=>String(item.id)===String(editingProjectId)?next:item);else projects.unshift(next);renderProjects();renderTasks();await saveState();closeModal();editingProjectId=null;showToast(existing?'项目已更新':'项目已创建并保存')
+}
+
+function projectDate(value,withTime=false){if(!value)return'未知日期';return new Date(value).toLocaleString('zh-CN',withTime?{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}:{year:'numeric',month:'2-digit',day:'2-digit'})}
+function projectFileIcon(file){const ext=(file.name?.split('.').pop()||'FILE').toUpperCase();return h(ext.slice(0,4))}
+function projectTimeline(project){
+  const rows=[{date:project.createdAt,type:'project',title:'创建项目',detail:project.description||'建立项目档案'}];
+  for(const file of project.files||[])rows.push({date:file.addedAt,type:'file',title:`${file.mode==='link'?'关联':'导入'}资料：${file.name}`,detail:projectFileCategoryLabels[file.category]||'其他资料'});
+  for(const log of project.logs||[])rows.push({date:log.date||log.createdAt,type:'log',title:log.summary||'新增工作日志',detail:log.improvements||log.problems||log.nextSteps||'记录了项目进展'});
+  return rows.filter(row=>row.date).sort((a,b)=>new Date(b.date)-new Date(a.date));
+}
+function projectDetailModal(projectId){
+  const project=projects.find(item=>String(item.id)===String(projectId));if(!project)return;activeProjectId=project.id;if(!Array.isArray(project.files))project.files=[];if(!Array.isArray(project.logs))project.logs=[];
+  const files=project.files.map(file=>`<div class="project-file-row"><span class="project-file-icon">${projectFileIcon(file)}</span><div><b>${h(file.name)}</b><small>${h(projectFileCategoryLabels[file.category]||'其他资料')} · ${h(file.mode==='link'?'外部关联':'项目资料库')} · ${h(formatFileSize(file.size))}</small></div><button data-project-file-open="${h(file.id)}">打开</button><button class="remove" data-project-file-remove="${h(file.id)}">移除</button></div>`).join('');
+  const logs=project.logs.slice().sort((a,b)=>new Date(b.date||b.createdAt)-new Date(a.date||a.createdAt)).map(log=>`<article class="project-log"><div><time>${h(projectDate(log.date||log.createdAt))}</time><button data-project-log-delete="${h(log.id)}" title="删除日志">×</button></div><h4>${h(log.summary||'工作记录')}</h4>${log.improvements?`<p><b>完成 / 改进</b>${h(log.improvements)}</p>`:''}${log.problems?`<p class="problem"><b>遗留问题</b>${h(log.problems)}</p>`:''}${log.nextSteps?`<p><b>下一步</b>${h(log.nextSteps)}</p>`:''}</article>`).join('');
+  const timeline=projectTimeline(project).slice(0,30).map(row=>`<div class="project-timeline-row ${h(row.type)}"><span></span><div><time>${h(projectDate(row.date,true))}</time><b>${h(row.title)}</b><small>${h(row.detail)}</small></div></div>`).join('');
+  showModal(`<div class="project-detail-head"><div><p>${h(projectTypeLabels[project.type]||'其他')} · ${h(projectStatusLabels[project.status]||'规划中')}</p><h2>${h(project.name)}</h2><small>${h(project.description||'还没有补充项目说明。')}</small></div><button class="outline-btn" data-project-edit="${h(project.id)}">编辑项目</button></div><div class="project-detail-metrics"><div><b>${Math.max(0,Math.min(100,Number(project.progress)||0))}%</b><small>当前进度</small></div><div><b>${project.files.length}</b><small>关联资料</small></div><div><b>${project.logs.length}</b><small>工作日志</small></div><div><b>${h(projectDate(project.updatedAt||project.createdAt))}</b><small>最近更新</small></div></div><div class="project-detail-grid"><section class="project-detail-section"><div class="project-section-head"><div><p>项目资料</p><h3>文件与成果</h3></div><select id="projectFileCategory">${Object.entries(projectFileCategoryLabels).map(([value,label])=>`<option value="${value}">${label}</option>`).join('')}</select><button class="outline-btn" data-action="project-link-files">关联原文件</button><button class="solid-btn" data-action="project-import-files">复制进资料库</button></div><div class="project-file-list">${files||'<div class="project-empty"><b>还没有项目资料</b><small>可以复制保存一份，也可以关联电脑上的原文件。</small></div>'}</div></section><section class="project-detail-section"><div class="project-section-head"><div><p>工作记录</p><h3>项目日志</h3></div><button class="solid-btn" data-action="project-add-log">＋ 写日志</button></div><div class="project-log-list">${logs||'<div class="project-empty"><b>还没有工作日志</b><small>记录做了什么、改进了什么、还剩什么问题。</small></div>'}</div></section><section class="project-detail-section project-timeline-section"><div class="project-section-head"><div><p>自动汇总</p><h3>项目时间线</h3></div></div><div class="project-timeline">${timeline}</div></section></div>`,true);
+}
+
+function projectLogModal(){
+  const project=projects.find(item=>String(item.id)===String(activeProjectId));if(!project)return;
+  showModal(`<div class="modal-icon">◷</div><h2>记录项目进展</h2><p>${h(project.name)} · 写下今天完成的工作、改进和遗留问题。</p><div class="form-grid"><div class="form-field"><label>日期</label><input id="projectLogDate" type="date" value="${localDateKey()}"></div><div class="form-field"><label>一句话摘要</label><input id="projectLogSummary" placeholder="例如：完成第一版 PCB 布线"></div><div class="form-field full"><label>完成了什么 / 有什么改进</label><textarea id="projectLogImprovements" rows="3" placeholder="记录具体修改、实验结果或取得的进展…"></textarea></div><div class="form-field full"><label>还有什么问题</label><textarea id="projectLogProblems" rows="3" placeholder="未解决的问题、风险或失败原因…"></textarea></div><div class="form-field full"><label>下一步</label><textarea id="projectLogNext" rows="2" placeholder="接下来准备做什么…"></textarea></div></div><div class="modal-actions"><button class="cancel" data-project-open="${h(project.id)}">返回项目</button><button class="confirm" data-action="project-save-log">保存日志</button></div>`);
+}
+async function saveProjectLog(){
+  const project=projects.find(item=>String(item.id)===String(activeProjectId));if(!project)return;const summary=$('#projectLogSummary')?.value.trim();const improvements=$('#projectLogImprovements')?.value.trim();const problems=$('#projectLogProblems')?.value.trim();const nextSteps=$('#projectLogNext')?.value.trim();if(!summary&&!improvements&&!problems&&!nextSteps){showToast('请至少填写一项日志内容');return}if(!Array.isArray(project.logs))project.logs=[];project.logs.unshift({id:`${Date.now()}-${Math.random().toString(16).slice(2,8)}`,date:$('#projectLogDate')?.value||localDateKey(),summary:summary||'项目工作记录',improvements,problems,nextSteps,createdAt:new Date().toISOString()});project.updatedAt=new Date().toISOString();await saveState();renderProjects();projectDetailModal(project.id);showToast('项目日志已保存');
+}
+async function attachProjectFiles(mode){
+  const project=projects.find(item=>String(item.id)===String(activeProjectId));if(!project||!window.orbito?.attachProjectFiles)return;const category=$('#projectFileCategory')?.value||'other';try{const result=await window.orbito.attachProjectFiles({projectId:project.id,mode,category});if(!result?.ok){showToast(result?.error||'添加文件失败');return}if(result.canceled)return;if(Array.isArray(result.state?.projects))projects=result.state.projects;renderProjects();projectDetailModal(project.id);showToast(`已${mode==='link'?'关联':'导入'} ${result.added?.length||0} 个文件`)}catch(error){showToast(`添加文件失败：${error.message||error}`)}
 }
 
 function eventModal(eventId=null){
@@ -533,7 +582,11 @@ document.addEventListener('click',e=>{
   const link=e.target.closest('[data-view-link]');if(link){closeModal();switchView(link.dataset.viewLink);return}
   const taskFilterButton=e.target.closest('[data-task-filter]');if(taskFilterButton){taskFilter=taskFilterButton.dataset.taskFilter;$$('[data-task-filter]').forEach(b=>b.classList.toggle('active',b===taskFilterButton));renderTasks();return}
   const projectFilterButton=e.target.closest('[data-project-filter]');if(projectFilterButton){projectFilter=projectFilterButton.dataset.projectFilter;$$('[data-project-filter]').forEach(b=>b.classList.toggle('active',b===projectFilterButton));renderProjects();return}
-  const projectOpen=e.target.closest('[data-project-open]');if(projectOpen){projectModal('',projectOpen.dataset.projectOpen);return}
+  const projectEdit=e.target.closest('[data-project-edit]');if(projectEdit){e.stopPropagation();projectModal('',projectEdit.dataset.projectEdit);return}
+  const projectOpen=e.target.closest('[data-project-open]');if(projectOpen){projectDetailModal(projectOpen.dataset.projectOpen);return}
+  const projectFileOpen=e.target.closest('[data-project-file-open]');if(projectFileOpen){window.orbito?.openProjectFile(activeProjectId,projectFileOpen.dataset.projectFileOpen).then(result=>{if(!result?.ok)showToast(result?.error||'无法打开文件')});return}
+  const projectFileRemove=e.target.closest('[data-project-file-remove]');if(projectFileRemove){const project=projects.find(item=>String(item.id)===String(activeProjectId));const file=project?.files?.find(item=>String(item.id)===projectFileRemove.dataset.projectFileRemove);if(file&&window.confirm(`从项目中移除“${file.name}”？${file.mode==='import'?'项目资料库中的副本也会删除。':'电脑上的原文件不会删除。'}`)){window.orbito?.removeProjectFile(project.id,file.id).then(result=>{if(result?.ok){projects=result.state.projects;renderProjects();projectDetailModal(project.id);showToast('项目文件已移除')}else showToast(result?.error||'移除失败')})}return}
+  const projectLogDelete=e.target.closest('[data-project-log-delete]');if(projectLogDelete){const project=projects.find(item=>String(item.id)===String(activeProjectId));const log=project?.logs?.find(item=>String(item.id)===projectLogDelete.dataset.projectLogDelete);if(log&&window.confirm('确定删除这条项目日志？')){project.logs=project.logs.filter(item=>String(item.id)!==String(log.id));project.updatedAt=new Date().toISOString();saveState();renderProjects();projectDetailModal(project.id);showToast('项目日志已删除')}return}
   const projectDelete=e.target.closest('[data-project-delete]');if(projectDelete){const project=projects.find(item=>String(item.id)===projectDelete.dataset.projectDelete);if(project&&window.confirm(`确定删除项目“${project.name}”？`)){projects=projects.filter(item=>String(item.id)!==projectDelete.dataset.projectDelete);renderProjects();renderTasks();saveState();closeModal();editingProjectId=null;showToast('项目已删除')}return}
   const calendarButton=e.target.closest('[data-calendar]');if(calendarButton){if(calendarButton.dataset.calendar==='today')calendarStart=getWeekStart();else calendarStart.setDate(calendarStart.getDate()+(calendarButton.dataset.calendar==='next'?7:-7));renderCalendar();return}
   const calendarEvent=e.target.closest('[data-calendar-event]');if(calendarEvent){eventModal(calendarEvent.dataset.calendarEvent);return}
@@ -569,7 +622,7 @@ document.addEventListener('click',e=>{
     'upload':()=>$('#fileInput').click(),'inventory-import':()=>$('#inventoryFileInput').click(),'save-part-edit':savePartEdit,'paper-import':importPapers,'attach-image':()=>$('#chatFileInput').click(),'remove-attachment':removeAttachment,'inbox':()=>{closeModal();switchView('dashboard');setTimeout(()=>document.querySelector('.drop-zone').scrollIntoView({behavior:'smooth',block:'center'}),120)},
     'search':searchModal,'notifications':notificationsModal,'profile':profileModal,'api-settings':apiSettingsModal,'save-api-settings':saveAPISettings,'clear-api-key':clearAPIKey,'read-notifications':()=>{const dot=document.querySelector('#notificationDot');if(dot)dot.hidden=true;closeModal();showToast('通知已全部标记为已读')},
     'add-purchase':()=>showToast('已加入待确认采购清单'),'paper-save':()=>showToast('已加入待读列表'),'create-insight':()=>showToast('已保存为产品洞察'),
-    'english-session':englishPlanModal,'save-english-plan':createEnglishPlan,'add-topic':addTopicModal,'refresh-all-topics':refreshAllTopics,'brief-read':()=>showToast('后续版本可调用语音模型朗读'),'project-open':()=>showToast('项目详情将在后续版本展开'),'show-data':()=>window.orbito?.showDataFolder(),
+    'english-session':englishPlanModal,'save-english-plan':createEnglishPlan,'add-topic':addTopicModal,'refresh-all-topics':refreshAllTopics,'brief-read':()=>showToast('后续版本可调用语音模型朗读'),'project-add-log':projectLogModal,'project-save-log':saveProjectLog,'project-import-files':()=>attachProjectFiles('import'),'project-link-files':()=>attachProjectFiles('link'),'show-data':()=>window.orbito?.showDataFolder(),
     'terminal-restart':()=>initTerminal(true),'terminal-claude':openClaude,'terminal-context':showTerminalContext,'terminal-clear':()=>{xterm?.clear();xterm?.focus()},'terminal-stop':async()=>{await window.orbito?.terminalKill();terminalStarted=false;setTerminalStatus(false,'已结束')}
   }[action]||(()=>showToast('此功能会在正式版本中接入')))();
 });
@@ -606,7 +659,7 @@ async function initialize(){
       if(!state.tasks)await saveState();
     }catch(error){console.error(error);}
   }
-  renderTasks();renderInventory();renderMemories();renderCalendar();renderTopicCards();renderTopicResults();renderEnglishPlans();renderPapers();renderProjects();
+  renderTasks();renderInventory();renderMemories();renderCalendar();renderTopicCards();renderTopicResults();renderDashboardBriefing();renderEnglishPlans();renderPapers();renderProjects();
   updateNotificationIndicator();
   updateClockGreeting();setInterval(updateClockGreeting,60*1000);
   window.orbito?.onStateChanged?.(state=>{
@@ -621,10 +674,12 @@ async function initialize(){
     if(Array.isArray(state.papers))papers=state.papers;
     if(Array.isArray(state.events))events=state.events;
     if(Array.isArray(state.projects))projects=state.projects;
-    renderTasks();renderInventory();renderMemories();renderTopicCards();renderTopicResults();renderEnglishPlans();renderPapers();renderProjects();
+    renderTasks();renderInventory();renderMemories();renderTopicCards();renderTopicResults();renderDashboardBriefing();renderEnglishPlans();renderPapers();renderProjects();
     showToast('工作台数据已由 Agent 更新');
   });
   // Auto-generate briefing on startup if API is configured and not yet today
   setTimeout(() => autoBriefing(), 1500);
+  setInterval(() => autoBriefing(), 30*60*1000);
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')autoBriefing()});
 }
 initialize();

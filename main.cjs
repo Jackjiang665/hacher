@@ -559,6 +559,91 @@ ipcMain.handle('paper:delete', (_event, paperId) => {
   notifyStateChanged();
   return { ok: true, state };
 });
+
+function findProject(state, projectId) {
+  if (!Array.isArray(state.projects)) state.projects = [];
+  return state.projects.find(project => String(project.id) === String(projectId));
+}
+
+function safeProjectDirectoryName(projectId) {
+  return String(projectId || '').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80) || 'project';
+}
+
+ipcMain.handle('project:attach-files', async (_event, options = {}) => {
+  const state = readState();
+  const project = findProject(state, options.projectId);
+  if (!project) return { ok: false, error: '没有找到这个项目' };
+  const mode = options.mode === 'link' ? 'link' : 'import';
+  const category = String(options.category || 'other').slice(0, 30);
+  const selection = await dialog.showOpenDialog(mainWindow, {
+    title: mode === 'link' ? '关联项目文件' : '导入项目资料库',
+    properties: ['openFile', 'multiSelections'],
+  });
+  if (selection.canceled || !selection.filePaths.length) return { ok: true, canceled: true, state };
+  if (!Array.isArray(project.files)) project.files = [];
+  const libraryDir = path.join(app.getPath('userData'), 'projects', safeProjectDirectoryName(project.id), 'files');
+  if (mode === 'import') fs.mkdirSync(libraryDir, { recursive: true });
+  const added = [];
+  for (const sourcePath of selection.filePaths) {
+    try {
+      const stat = fs.statSync(sourcePath);
+      if (!stat.isFile()) continue;
+      const originalName = path.basename(sourcePath);
+      let storedPath = '';
+      if (mode === 'import') {
+        const storedName = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}${path.extname(originalName)}`;
+        storedPath = path.join(libraryDir, storedName);
+        fs.copyFileSync(sourcePath, storedPath);
+      }
+      const file = {
+        id: `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
+        name: originalName,
+        category,
+        mode,
+        sourcePath: mode === 'link' ? sourcePath : '',
+        storedPath,
+        size: stat.size,
+        modifiedAt: stat.mtime.toISOString(),
+        addedAt: new Date().toISOString(),
+      };
+      project.files.unshift(file);
+      added.push(file);
+    } catch (error) {
+      console.error(`Failed to attach project file ${sourcePath}:`, error);
+    }
+  }
+  project.updatedAt = new Date().toISOString();
+  writeState(state);
+  notifyStateChanged();
+  return { ok: true, canceled: false, added, state };
+});
+
+ipcMain.handle('project:open-file', async (_event, projectId, fileId) => {
+  const state = readState();
+  const project = findProject(state, projectId);
+  const file = project?.files?.find(item => String(item.id) === String(fileId));
+  const targetPath = file?.mode === 'link' ? file.sourcePath : file?.storedPath;
+  if (!targetPath || !fs.existsSync(targetPath)) return { ok: false, error: '文件不存在，原文件可能已被移动或删除' };
+  const error = await shell.openPath(targetPath);
+  return error ? { ok: false, error } : { ok: true };
+});
+
+ipcMain.handle('project:remove-file', (_event, projectId, fileId) => {
+  const state = readState();
+  const project = findProject(state, projectId);
+  const file = project?.files?.find(item => String(item.id) === String(fileId));
+  if (!project || !file) return { ok: false, error: '没有找到这个项目文件' };
+  if (file.mode === 'import' && file.storedPath) {
+    const libraryDir = path.resolve(app.getPath('userData'), 'projects', safeProjectDirectoryName(project.id), 'files');
+    const storedPath = path.resolve(file.storedPath);
+    if (path.dirname(storedPath) === libraryDir && fs.existsSync(storedPath)) fs.unlinkSync(storedPath);
+  }
+  project.files = project.files.filter(item => String(item.id) !== String(fileId));
+  project.updatedAt = new Date().toISOString();
+  writeState(state);
+  notifyStateChanged();
+  return { ok: true, state };
+});
 ipcMain.handle('ai:status', () => ({
   configured: Boolean(getDashscopeKey()),
   model: process.env.ORBITO_QWEN_MODEL || 'qwen3.7-plus',
