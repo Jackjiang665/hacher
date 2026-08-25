@@ -19,6 +19,8 @@ let activeProjectId = null;
 let activeProjectTab = 'overview';
 let activeTopicId = null;
 let aiConfigured = false;
+let appUpdateStatus = {state:'idle',currentVersion:'—',availableVersion:'',percent:0,error:''};
+let updateStatusUnsubscribe = null;
 let taskFilter = 'all';
 let projectFilter = 'all';
 let autoBriefingRunning = false;
@@ -613,7 +615,29 @@ function dailyPlan(){openAssistantPreset('today','根据我今天的真实任务
 
 function notificationsModal(){const open=tasks.filter(t=>!t.done);const low=inventory.filter(p=>Number(p.qty)<=2);const rows=[...open.slice(0,3).map(t=>`<div class="result-row"><b>待办</b><span>${h(t.title)}</span><span>${h(taskDateLabel(t))}</span></div>`),...low.slice(0,3).map(p=>`<div class="result-row"><b>库存</b><span>${h(p.name)}</span><span>剩余 ${p.qty}</span></div>`)];showModal(`<div class="modal-icon">♢</div><h2>通知</h2><p>这里只显示根据真实任务和库存生成的提醒。</p>${rows.length?`<div class="result-box">${rows.join('')}</div>`:'<div class="empty-state small"><b>目前没有通知</b><small>新增待办或库存记录后，相关提醒会出现在这里</small></div>'}<div class="modal-actions"><button class="confirm" data-action="read-notifications">全部已读</button></div>`)}
 
-function profileModal(){showModal(`<div class="modal-icon">XY</div><h2>我的工作区</h2><p>当前为单人、本地优先模式。账户与多端同步将在后续版本加入。</p><div class="result-box"><p><b>后台智能服务：</b>${aiConfigured?'已配置':'尚未配置'}</p><p><b>数据存储：</b>本机应用数据目录</p><p><b>长期记忆：</b>${memories.length} 条</p><p><b>未完成任务：</b>${tasks.filter(t=>!t.done).length} 项</p></div><div class="workspace-settings"><button type="button" data-action="api-settings"><span>🔑</span><div><b>后台智能服务</b><small>${aiConfigured?'用于截图识别、论文检索与每日情报':'配置后启用后台识别与检索'}</small></div><i>›</i></button></div><div class="modal-actions"><button class="cancel" data-action="show-data">打开数据位置</button><button class="confirm" data-action="close-modal">完成</button></div>`)}
+async function profileModal(){
+  try{appUpdateStatus=await window.orbito?.getUpdateStatus()||appUpdateStatus}catch(error){console.error(error)}
+  const updateCopy=appUpdateStatus.state==='available'?`发现 v${appUpdateStatus.availableVersion}`:appUpdateStatus.state==='downloaded'?`v${appUpdateStatus.availableVersion} 已下载`:appUpdateStatus.state==='up-to-date'?'当前已是最新版':`当前版本 v${appUpdateStatus.currentVersion||'—'}`;
+  showModal(`<div class="modal-icon">XY</div><h2>我的工作区</h2><p>当前为单人、本地优先模式。账户与多端同步将在后续版本加入。</p><div class="result-box"><p><b>后台智能服务：</b>${aiConfigured?'已配置':'尚未配置'}</p><p><b>数据存储：</b>本机应用数据目录</p><p><b>长期记忆：</b>${memories.length} 条</p><p><b>未完成任务：</b>${tasks.filter(t=>!t.done).length} 项</p></div><div class="workspace-settings"><button type="button" data-action="api-settings"><span>🔑</span><div><b>后台智能服务</b><small>${aiConfigured?'用于截图识别、论文检索与每日情报':'配置后启用后台识别与检索'}</small></div><i>›</i></button><button type="button" data-action="app-update"><span>↻</span><div><b>版本与更新</b><small>${h(updateCopy)}</small></div><i>›</i></button></div><div class="modal-actions"><button class="cancel" data-action="show-data">打开数据位置</button><button class="confirm" data-action="close-modal">完成</button></div>`)
+}
+
+function formatUpdateBytes(value){const bytes=Math.max(0,Number(value)||0);if(!bytes)return'0 MB';if(bytes<1024*1024)return`${(bytes/1024).toFixed(1)} KB`;return`${(bytes/1024/1024).toFixed(1)} MB`}
+function updatePanelMarkup(status=appUpdateStatus){
+  const state=status.state||'idle';const current=h(status.currentVersion||'—');const available=h(status.availableVersion||'');
+  if(state==='checking')return`<div class="update-state"><span class="update-spinner">↻</span><b>正在检查更新</b><p>正在连接 GitHub Releases，请稍候。</p></div><div class="modal-actions"><button class="cancel" data-action="close-modal">后台继续</button></div>`;
+  if(state==='available')return`<div class="update-state available"><span>↑</span><b>发现新版本 v${available}</b><p>当前版本 v${current}。是否现在下载更新？</p></div>${status.releaseNotes?`<div class="update-notes"><b>更新说明</b><p>${h(status.releaseNotes).replace(/\n/g,'<br>')}</p></div>`:''}<div class="modal-actions"><button class="cancel" data-action="close-modal">稍后</button><button class="confirm" data-action="update-download">下载更新</button></div>`;
+  if(state==='downloading'){const percent=Math.max(0,Math.min(100,Number(status.percent)||0));return`<div class="update-state"><span>↓</span><b>正在下载 v${available||current}</b><p>${percent.toFixed(1)}% · ${formatUpdateBytes(status.transferred)} / ${formatUpdateBytes(status.total)}${status.bytesPerSecond?` · ${formatUpdateBytes(status.bytesPerSecond)}/s`:''}</p></div><div class="update-progress"><i style="width:${percent}%"></i></div><div class="modal-actions"><button class="cancel" data-action="close-modal">后台下载</button><button class="confirm" disabled>下载中…</button></div>`}
+  if(state==='downloaded')return`<div class="update-state downloaded"><span>✓</span><b>v${available||current} 已准备好</b><p>重启 hacher 后安装更新。工作台数据不会被删除。</p></div><div class="modal-actions"><button class="cancel" data-action="close-modal">稍后安装</button><button class="confirm" data-action="update-install">立即重启安装</button></div>`;
+  if(state==='up-to-date')return`<div class="update-state downloaded"><span>✓</span><b>当前已是最新版</b><p>当前版本 v${current}。</p></div><div class="modal-actions"><button class="cancel" data-action="profile">返回</button><button class="confirm" data-action="update-check">重新检查</button></div>`;
+  if(state==='unsupported')return`<div class="update-state error"><span>!</span><b>当前版本无法在线更新</b><p>${h(status.error||'请安装正式发布版后使用在线更新。')}</p></div><div class="modal-actions"><button class="confirm" data-action="close-modal">知道了</button></div>`;
+  if(state==='error')return`<div class="update-state error"><span>!</span><b>检查更新失败</b><p>${h(status.error||'暂时无法连接更新服务，请稍后重试。')}</p></div><div class="modal-actions"><button class="cancel" data-action="profile">返回</button><button class="confirm" data-action="update-check">重试</button></div>`;
+  return`<div class="update-state"><span>↻</span><b>检查 hacher 更新</b><p>当前版本 v${current}。只有在你确认后才会下载和安装。</p></div><div class="modal-actions"><button class="cancel" data-action="profile">返回</button><button class="confirm" data-action="update-check">检查更新</button></div>`
+}
+function renderAppUpdateStatus(status){appUpdateStatus={...appUpdateStatus,...status};const panel=$('#updatePanel');if(panel)panel.innerHTML=updatePanelMarkup(appUpdateStatus)}
+async function appUpdateModal(){try{appUpdateStatus=await window.orbito?.getUpdateStatus()||appUpdateStatus}catch(error){appUpdateStatus={...appUpdateStatus,state:'error',error:error.message||String(error)}}showModal(`<div class="modal-icon">↻</div><h2>版本与更新</h2><p>更新由 GitHub Releases 提供。hacher 不会未经确认自动安装。</p><div id="updatePanel">${updatePanelMarkup(appUpdateStatus)}</div>`)}
+async function checkAppUpdate(){renderAppUpdateStatus({state:'checking',error:''});try{const status=await window.orbito?.checkForUpdates();if(status)renderAppUpdateStatus(status)}catch(error){renderAppUpdateStatus({state:'error',error:error.message||String(error)})}}
+async function downloadAppUpdate(){renderAppUpdateStatus({state:'downloading',percent:0,error:''});try{const status=await window.orbito?.downloadUpdate();if(status)renderAppUpdateStatus(status)}catch(error){renderAppUpdateStatus({state:'error',error:error.message||String(error)})}}
+async function installAppUpdate(){if(!window.confirm('立即关闭 hacher 并安装更新？'))return;try{const result=await window.orbito?.installUpdate();if(result&&!result.ok)showToast(result.error||'更新尚未准备好')}catch(error){showToast('启动安装失败：'+(error.message||error))}}
 
 async function apiSettingsModal(){
   let status={configured:aiConfigured,model:'qwen3.7-plus'};
@@ -796,7 +820,7 @@ document.addEventListener('click',e=>{
     'quick-add':()=>formModal('task'),'add-task':()=>formModal('task'),'add-event':()=>eventModal(),'save-event':saveEvent,'add-project':()=>projectModal(),'add-diy-project':()=>projectModal('diy'),'save-project':saveProject,'add-part':()=>formModal('part'),'add-memory':memoryModal,'project-add-task':()=>formModal('task',activeProjectId),'project-add-event':()=>eventModal(null,activeProjectId),'project-link-tasks':()=>projectItemsModal('tasks'),'project-link-events':()=>projectItemsModal('events'),'project-save-items':saveProjectItems,'project-link-papers':projectPapersModal,'project-save-papers':saveProjectPapers,'project-add-bom':projectBomModal,'project-save-bom':saveProjectBom,'project-add-milestone':milestoneModal,'project-save-milestone':saveMilestone,'project-add-issue':issueModal,'project-save-issue':saveIssue,'project-add-decision':decisionModal,'project-save-decision':saveDecision,
     'paper-search':paperSearchModal,'execute-paper-search':executePaperSearch,
     'inventory-import':()=>$('#inventoryFileInput').click(),'save-part-edit':savePartEdit,'paper-import':importPapers,
-    'search':searchModal,'notifications':notificationsModal,'profile':profileModal,'api-settings':apiSettingsModal,'save-api-settings':saveAPISettings,'clear-api-key':clearAPIKey,'read-notifications':()=>{const dot=document.querySelector('#notificationDot');if(dot)dot.hidden=true;closeModal();showToast('通知已全部标记为已读')},
+    'search':searchModal,'notifications':notificationsModal,'profile':profileModal,'api-settings':apiSettingsModal,'save-api-settings':saveAPISettings,'clear-api-key':clearAPIKey,'app-update':appUpdateModal,'update-check':checkAppUpdate,'update-download':downloadAppUpdate,'update-install':installAppUpdate,'read-notifications':()=>{const dot=document.querySelector('#notificationDot');if(dot)dot.hidden=true;closeModal();showToast('通知已全部标记为已读')},
     'add-purchase':()=>showToast('已加入待确认采购清单'),'paper-save':()=>showToast('已加入待读列表'),'create-insight':()=>showToast('已保存为产品洞察'),
     'english-session':englishPlanModal,'save-english-plan':createEnglishPlan,'add-topic':addTopicModal,'refresh-all-topics':refreshAllTopics,'brief-read':()=>showToast('后续版本可调用语音模型朗读'),'project-add-log':projectLogModal,'project-save-log':saveProjectLog,'project-import-files':()=>attachProjectFiles('import'),'project-link-files':()=>attachProjectFiles('link'),'show-data':()=>window.orbito?.showDataFolder(),
     'terminal-restart':()=>initTerminal(true),'terminal-claude':openClaude,'terminal-context':showTerminalContext,'terminal-clear':()=>{xterm?.clear();xterm?.focus()},'terminal-stop':async()=>{await window.orbito?.terminalKill();terminalStarted=false;setTerminalStatus(false,'已结束')}
@@ -811,6 +835,8 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();if((e.c
 async function initialize(){
   if(window.orbito){
     try{
+      appUpdateStatus=await window.orbito.getUpdateStatus()||appUpdateStatus;
+      if(!updateStatusUnsubscribe)updateStatusUnsubscribe=window.orbito.onUpdateStatus(status=>renderAppUpdateStatus(status));
       const state=await window.orbito.getState();
       if(Array.isArray(state.tasks))tasks=state.tasks;
       if(Array.isArray(state.inventory))inventory=state.inventory;

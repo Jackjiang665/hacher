@@ -4,6 +4,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const net = require('net');
 const { execFileSync, spawn } = require('child_process');
+const { autoUpdater } = require('electron-updater');
 
 const legacyUserData = path.join(app.getPath('appData'), 'orbito-workbench');
 const hacherUserData = path.join(app.getPath('appData'), 'hacher-workbench');
@@ -20,6 +21,20 @@ let terminalProcess = null;
 const agentProcesses = new Map();
 let stateWatcherStarted = false;
 let lastRendererWriteAt = 0;
+let updaterInitialized = false;
+let updateOperation = null;
+let updateStatus = {
+  state: 'idle',
+  currentVersion: app.getVersion(),
+  availableVersion: '',
+  releaseName: '',
+  releaseNotes: '',
+  percent: 0,
+  transferred: 0,
+  total: 0,
+  bytesPerSecond: 0,
+  error: '',
+};
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) app.quit();
 
@@ -89,6 +104,72 @@ async function createTerminalEnvironment() {
     ignoredProxies.push({ name, endpoint: id });
   }));
   return { env, ignoredProxies };
+}
+
+function normalizeReleaseNotes(notes) {
+  if (Array.isArray(notes)) {
+    return notes.map(item => `${item.version ? `${item.version}\n` : ''}${item.note || ''}`).join('\n\n').trim().slice(0, 12000);
+  }
+  return String(notes || '').trim().slice(0, 12000);
+}
+
+function updateStatusSnapshot() {
+  return { ...updateStatus, currentVersion: app.getVersion(), packaged: app.isPackaged };
+}
+
+function broadcastUpdateStatus(changes = {}) {
+  updateStatus = { ...updateStatus, ...changes, currentVersion: app.getVersion() };
+  const snapshot = updateStatusSnapshot();
+  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isLoading()) {
+    mainWindow.webContents.send('update:status', snapshot);
+  }
+  return snapshot;
+}
+
+function initializeUpdater() {
+  if (updaterInitialized) return;
+  updaterInitialized = true;
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = false;
+  autoUpdater.allowPrerelease = false;
+  autoUpdater.on('checking-for-update', () => broadcastUpdateStatus({ state: 'checking', error: '', percent: 0 }));
+  autoUpdater.on('update-available', info => broadcastUpdateStatus({
+    state: 'available',
+    availableVersion: String(info.version || ''),
+    releaseName: String(info.releaseName || ''),
+    releaseNotes: normalizeReleaseNotes(info.releaseNotes),
+    error: '',
+    percent: 0,
+  }));
+  autoUpdater.on('update-not-available', () => broadcastUpdateStatus({
+    state: 'up-to-date',
+    availableVersion: '',
+    releaseName: '',
+    releaseNotes: '',
+    error: '',
+    percent: 0,
+  }));
+  autoUpdater.on('download-progress', progress => broadcastUpdateStatus({
+    state: 'downloading',
+    percent: Math.max(0, Math.min(100, Number(progress.percent) || 0)),
+    transferred: Math.max(0, Number(progress.transferred) || 0),
+    total: Math.max(0, Number(progress.total) || 0),
+    bytesPerSecond: Math.max(0, Number(progress.bytesPerSecond) || 0),
+    error: '',
+  }));
+  autoUpdater.on('update-downloaded', info => broadcastUpdateStatus({
+    state: 'downloaded',
+    availableVersion: String(info.version || updateStatus.availableVersion || ''),
+    releaseName: String(info.releaseName || updateStatus.releaseName || ''),
+    releaseNotes: normalizeReleaseNotes(info.releaseNotes) || updateStatus.releaseNotes,
+    percent: 100,
+    error: '',
+  }));
+  autoUpdater.on('update-cancelled', () => broadcastUpdateStatus({ state: 'available', percent: 0, error: '' }));
+  autoUpdater.on('error', error => broadcastUpdateStatus({
+    state: 'error',
+    error: String(error?.message || error || '更新服务发生未知错误').slice(0, 1000),
+  }));
 }
 
 function notifyStateChanged() {
@@ -665,6 +746,7 @@ app.whenReady().then(async () => {
   }
   createTray();
   createWindow();
+  initializeUpdater();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
@@ -684,6 +766,46 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   app.isQuitting = true;
+});
+
+ipcMain.handle('update:get-status', () => updateStatusSnapshot());
+
+ipcMain.handle('update:check', async () => {
+  initializeUpdater();
+  if (!app.isPackaged) return broadcastUpdateStatus({ state: 'unsupported', error: '开发模式不执行在线更新，请使用安装版测试。' });
+  if (updateOperation) return updateStatusSnapshot();
+  updateOperation = autoUpdater.checkForUpdates();
+  try {
+    await updateOperation;
+    return updateStatusSnapshot();
+  } catch (error) {
+    return broadcastUpdateStatus({ state: 'error', error: String(error?.message || error).slice(0, 1000) });
+  } finally {
+    updateOperation = null;
+  }
+});
+
+ipcMain.handle('update:download', async () => {
+  initializeUpdater();
+  if (updateStatus.state !== 'available') return updateStatusSnapshot();
+  if (updateOperation) return updateStatusSnapshot();
+  broadcastUpdateStatus({ state: 'downloading', percent: 0, error: '' });
+  updateOperation = autoUpdater.downloadUpdate();
+  try {
+    await updateOperation;
+    return updateStatusSnapshot();
+  } catch (error) {
+    return broadcastUpdateStatus({ state: 'error', error: String(error?.message || error).slice(0, 1000) });
+  } finally {
+    updateOperation = null;
+  }
+});
+
+ipcMain.handle('update:install', () => {
+  if (updateStatus.state !== 'downloaded') return { ok: false, error: '更新尚未下载完成' };
+  app.isQuitting = true;
+  setImmediate(() => autoUpdater.quitAndInstall(false, true));
+  return { ok: true };
 });
 
 ipcMain.handle('state:get', () => readState());

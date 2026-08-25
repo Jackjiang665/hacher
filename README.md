@@ -56,12 +56,15 @@ hacher 是一个面向科研、研发和个人项目的 Windows 本地桌面工�
 | 电子元件库 | 手动入库、AI 截图入库、库存管理和低库存提醒 |
 | Agent 记忆中心 | 查看、添加和删除 Claude 可读取的长期记忆 |
 | Agent 终端 | 内嵌 PowerShell、Claude Code 和工作台数据桥 |
+| 软件更新 | 在工作区设置中检查版本、查看更新说明、下载并确认重启安装 |
 
 ## 下载与安装
 
 前往 [Releases](https://github.com/Jackjiang665/hacher/releases/latest) 下载最新的 `hacher-setup-*.exe`。
 
 安装程序支持选择固定安装目录，并会创建桌面和开始菜单快捷方式。目前只提供 Windows x64 版本。
+
+从 v1.4.0 开始，安装版可在“我的工作区 → 版本与更新”中主动检查 GitHub Releases。软件不会未经确认自动下载或安装更新。
 
 ## 配置后台智能服务
 

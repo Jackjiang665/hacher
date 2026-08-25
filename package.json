@@ -1,6 +1,6 @@
 {
   "name": "hacher-workbench",
-  "version": "1.3.2",
+  "version": "1.4.0",
   "description": "hacher 个人智能工作台 Windows 桌面版",
   "main": "main.cjs",
   "author": "hacher",
@@ -41,6 +41,14 @@
     "directories": {
       "output": "release-build"
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Jackjiang665",
+        "repo": "hacher",
+        "releaseType": "release"
+      }
+    ],
     "win": {
       "icon": "assets/hacher.ico",
       "target": [
@@ -60,6 +68,7 @@
   "dependencies": {
     "@homebridge/node-pty-prebuilt-multiarch": "^0.14.1",
     "@xterm/addon-fit": "^0.10.0",
-    "@xterm/xterm": "^5.5.0"
+    "@xterm/xterm": "^5.5.0",
+    "electron-updater": "^6.8.9"
   }
 }

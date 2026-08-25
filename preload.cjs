@@ -10,6 +10,10 @@ contextBridge.exposeInMainWorld('orbito', {
   saveAIKey: (key) => ipcRenderer.invoke('ai:save-key', key),
   saveAISettings: (settings) => ipcRenderer.invoke('ai:save-settings', settings),
   clearAIKey: () => ipcRenderer.invoke('ai:clear-key'),
+  getUpdateStatus: () => ipcRenderer.invoke('update:get-status'),
+  checkForUpdates: () => ipcRenderer.invoke('update:check'),
+  downloadUpdate: () => ipcRenderer.invoke('update:download'),
+  installUpdate: () => ipcRenderer.invoke('update:install'),
   showDataFolder: () => ipcRenderer.invoke('data:show-folder'),
   importPapers: () => ipcRenderer.invoke('paper:import'),
   openPaper: (paperId) => ipcRenderer.invoke('paper:open', paperId),
@@ -35,6 +39,11 @@ contextBridge.exposeInMainWorld('orbito', {
     const handler = (_event, state) => callback(state);
     ipcRenderer.on('state:changed', handler);
     return () => ipcRenderer.removeListener('state:changed', handler);
+  },
+  onUpdateStatus: (callback) => {
+    const handler = (_event, status) => callback(status);
+    ipcRenderer.on('update:status', handler);
+    return () => ipcRenderer.removeListener('update:status', handler);
   },
   generateBriefing: (topic) => ipcRenderer.invoke('briefing:generate', topic),
   addTopic: (name) => ipcRenderer.invoke('topic:add', name),
