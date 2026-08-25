@@ -174,8 +174,13 @@ function deleteUserEnvironmentValue(name) {
 
 function validateDashscopeKey(value) {
   const key = String(value || '').trim();
-  return /^sk-[a-zA-Z0-9_-]{10,}$/.test(key) ? key : '';
+  if (!key.startsWith('sk-')) return '';
+  if (key.length < 16 || key.length > 2048) return '';
+  if (!/^[\x21-\x7e]+$/.test(key)) return '';
+  return key;
 }
+
+const dashscopeKeyError = 'Key 格式不正确，请粘贴完整的阿里云百炼 Key（支持 sk- 和 sk-ws-，不能包含空格或换行）';
 
 function validateModel(value) {
   const model = String(value || '').trim();
@@ -845,7 +850,7 @@ ipcMain.handle('ai:status', () => ({
 ipcMain.handle('ai:save-key', (_event, key) => {
   const trimmed = validateDashscopeKey(key);
   if (!trimmed) {
-    return { ok: false, error: 'Key 格式不正确，应以 sk- 开头' };
+    return { ok: false, error: dashscopeKeyError };
   }
   try {
     setUserEnvironmentValue('DASHSCOPE_API_KEY', trimmed);
@@ -858,7 +863,7 @@ ipcMain.handle('ai:save-key', (_event, key) => {
 ipcMain.handle('ai:save-settings', (_event, settings = {}) => {
   const keyInput = String(settings.key || '').trim();
   const model = validateModel(settings.model || 'qwen3.7-plus');
-  if (keyInput && !validateDashscopeKey(keyInput)) return { ok: false, error: 'Key 格式不正确，应以 sk- 开头' };
+  if (keyInput && !validateDashscopeKey(keyInput)) return { ok: false, error: dashscopeKeyError };
   if (!model) return { ok: false, error: '模型名称格式不正确' };
   if (!keyInput && !getDashscopeKey()) return { ok: false, error: '首次配置时必须填写 API Key' };
   try {
