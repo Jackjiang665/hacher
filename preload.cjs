@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('orbito', {
   getState: () => ipcRenderer.invoke('state:get'),
   saveState: (state) => ipcRenderer.invoke('state:save', state),
+  patchState: (changes) => ipcRenderer.invoke('state:patch', changes),
   chat: (payload) => ipcRenderer.invoke('ai:chat', payload),
   recognizeInventoryImage: (payload) => ipcRenderer.invoke('inventory:recognize-image', payload),
   getAIStatus: () => ipcRenderer.invoke('ai:status'),
