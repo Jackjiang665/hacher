@@ -894,7 +894,9 @@ ipcMain.handle('project:attach-files', async (_event, options = {}) => {
   const project = findProject(state, options.projectId);
   if (!project) return { ok: false, error: '没有找到这个项目' };
   const mode = options.mode === 'link' ? 'link' : 'import';
-  const category = String(options.category || 'other').slice(0, 30);
+  const allowedCategories = new Set(['circuit', 'bom', 'schematic', 'model', 'code', 'paper', 'contract', 'test', 'other']);
+  const requestedCategory = String(options.category || 'other').slice(0, 30);
+  const category = allowedCategories.has(requestedCategory) ? requestedCategory : 'other';
   const selection = await dialog.showOpenDialog(mainWindow, {
     title: mode === 'link' ? '关联项目文件' : '导入项目资料库',
     properties: ['openFile', 'multiSelections'],
@@ -932,6 +934,7 @@ ipcMain.handle('project:attach-files', async (_event, options = {}) => {
       console.error(`Failed to attach project file ${sourcePath}:`, error);
     }
   }
+  project.lastFileCategory = category;
   project.updatedAt = new Date().toISOString();
   writeState(state);
   notifyStateChanged();
