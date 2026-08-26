@@ -11,6 +11,9 @@ let papers = [];
 let events = [];
 let projects = [];
 let aiTasks = [];
+let inboxItems = [];
+let mailStatus = {configured:false,provider:'qq',email:'',lastTestedAt:'',lastSyncedAt:''};
+let mailSyncing = false;
 let activeAITaskId = null;
 let agentContextSelection = 'workspace';
 let editingEventId = null;
@@ -31,7 +34,7 @@ let xterm = null;
 let fitAddon = null;
 let terminalStarted = false;
 let terminalStartPromise = null;
-const viewNames = { dashboard:'工作台总览',today:'今日待办',calendar:'日程安排',projects:'项目中心','project-detail':'项目工作区',papers:'论文与科研',english:'英语学习',briefing:'每日情报',diy:'DIY 项目',inventory:'电子元件库',memory:'AI 记忆中心',terminal:'Agent 终端' };
+const viewNames = { dashboard:'工作台总览',today:'今日待办',calendar:'日程安排',projects:'项目中心','project-detail':'项目工作区',papers:'论文与科研',english:'英语学习',briefing:'每日情报',diy:'DIY 项目',inventory:'电子元件库',inbox:'AI 收件箱',memory:'AI 记忆中心',terminal:'Agent 终端' };
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
 const h = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -183,6 +186,55 @@ function renderMemories() {
   setCountBadge('memoryBadge',memories.length);
   $('#memoryCount').textContent = `${memories.length} 条`;
   $('#memoryList').innerHTML = memories.length ? memories.map((m,i)=>`<div class="memory-item"><span>◉</span><div><b>${h(m.text)}</b><small>${h(m.source || '手动添加')} · ${m.createdAt ? new Date(m.createdAt).toLocaleDateString('zh-CN') : '刚刚'}</small></div><button data-memory-delete="${i}">删除</button></div>`).join('') : '<div class="memory-empty"><span>◉</span><b>还没有长期记忆</b><small>点击“添加记忆”，或在对话中明确告诉 AI“请记住……”</small></div>';
+}
+
+function inboxDate(value){
+  const date=value?new Date(value):null;if(!date||Number.isNaN(date.getTime()))return'时间未知';
+  const now=new Date();const sameDay=date.toDateString()===now.toDateString();
+  return sameDay?date.toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'}):date.toLocaleDateString('zh-CN',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+}
+
+function renderInbox(){
+  const status=$('#inboxStatus');const list=$('#inboxList');if(!status||!list)return;
+  const visibleItems=mailStatus.configured?inboxItems.filter(item=>item.account===mailStatus.email):[];const unread=visibleItems.filter(item=>item.unread).length;
+  setCountBadge('inboxBadge',unread);$('#inboxCount').textContent=`${visibleItems.length} 封`;
+  status.innerHTML=`<article><span class="${mailStatus.configured?'connected':''}">${mailStatus.configured?'✓':'○'}</span><div><small>邮箱连接</small><b>${mailStatus.configured?h(mailStatus.email):'尚未连接'}</b></div></article><article><span>↻</span><div><small>上次同步</small><b>${mailStatus.lastSyncedAt?h(inboxDate(mailStatus.lastSyncedAt)):'尚未同步'}</b></div></article><article><span>●</span><div><small>未读邮件</small><b>${unread} 封</b></div></article>`;
+  const syncButton=$('#mailSyncButton');if(syncButton){syncButton.disabled=mailSyncing||!mailStatus.configured;syncButton.textContent=mailSyncing?'同步中…':'↻ 同步邮件'}
+  if(!mailStatus.configured){list.innerHTML='<div class="inbox-empty"><span>⌑</span><b>先连接你的 QQ 邮箱</b><small>hacher 只读取最近邮件的发件人、主题、时间和未读状态，不读取正文，也不会改变邮箱内容。</small><button data-action="mail-settings">连接 QQ 邮箱</button></div>';return}
+  if(!visibleItems.length){list.innerHTML='<div class="inbox-empty"><span>↻</span><b>还没有同步邮件</b><small>点击“同步邮件”，从 QQ 邮箱只读获取最近 50 封邮件。</small><button data-action="mail-sync">开始第一次同步</button></div>';return}
+  list.innerHTML=`<div class="inbox-list">${visibleItems.map(item=>{const address=item.from?.[0]?.address||'';return `<article class="inbox-row ${item.unread?'unread':''}"><span class="inbox-unread-dot"></span><div class="inbox-sender"><b>${h(item.sender||'未知发件人')}</b><small>${h(address)}</small></div><div class="inbox-subject"><b>${h(item.subject||'（无主题）')}</b><small>仅同步邮件摘要信息 · 正文尚未读取</small></div><time>${h(inboxDate(item.receivedAt))}</time></article>`}).join('')}</div>`;
+}
+
+async function loadMailStatus(){
+  if(!window.orbito?.getMailStatus)return;
+  try{mailStatus=await window.orbito.getMailStatus()||mailStatus}catch(error){console.error(error)}
+}
+
+async function mailSettingsModal(){
+  await loadMailStatus();
+  showModal(`<div class="modal-icon">⌑</div><h2>连接 QQ 邮箱</h2><p>请先在 QQ 邮箱中开启 IMAP/SMTP 服务并生成授权码。这里填写的是授权码，不是 QQ 密码。</p><div class="api-status ${mailStatus.configured?'connected':''}"><span></span><b>${mailStatus.configured?'已连接':'尚未连接'}</b><small>${mailStatus.configured?'留空授权码可继续使用本机已保存的配置':'连接测试通过后才会保存'}</small></div><div class="mail-privacy-note"><b>只读边界</b><span>当前版本只同步最近邮件的发件人、主题、时间与未读状态；不读取正文、不下载附件、不发送邮件、不改变已读状态。</span></div><div class="form-grid"><div class="form-field full"><label>QQ 邮箱地址</label><input id="mailSettingsEmail" type="email" value="${h(mailStatus.email||'')}" placeholder="name@qq.com" autocomplete="username" spellcheck="false"></div><div class="form-field full"><label>IMAP 授权码</label><input id="mailSettingsCode" type="password" placeholder="${mailStatus.configured?'已加密保存，留空即可':'粘贴 QQ 邮箱生成的授权码'}" autocomplete="new-password" spellcheck="false"></div></div><a class="api-help-link" href="https://mail.qq.com/" target="_blank" rel="noreferrer">打开 QQ 邮箱设置 →</a><div class="modal-actions">${mailStatus.configured?'<button class="danger-modal-btn" data-action="mail-clear">断开连接</button>':''}<button class="cancel" data-action="close-modal">取消</button><button class="confirm" data-action="mail-save-test">保存并测试</button></div>`);
+  setTimeout(()=>$('#mailSettingsEmail')?.focus(),100);
+}
+
+async function saveAndTestMail(){
+  const email=$('#mailSettingsEmail')?.value.trim()||'';const authCode=$('#mailSettingsCode')?.value.trim()||'';const button=$('[data-action="mail-save-test"]');
+  if(!email){showToast('请输入 QQ 邮箱地址');return}
+  if(button){button.disabled=true;button.textContent='正在测试…'}
+  try{const result=await window.orbito?.saveAndTestMail({email,authCode});if(!result?.ok){showToast(result?.error||'连接测试失败');return}mailStatus=result.status;closeModal();renderInbox();showToast('QQ 邮箱已连接，可以开始同步')}
+  catch(error){showToast('连接失败：'+(error.message||error))}finally{if(button){button.disabled=false;button.textContent='保存并测试'}}
+}
+
+async function syncMailInbox(){
+  if(mailSyncing)return;if(!mailStatus.configured){mailSettingsModal();return}
+  mailSyncing=true;renderInbox();
+  try{const result=await window.orbito?.syncMailInbox({limit:50});if(!result?.ok){showToast(result?.error||'同步失败');return}if(Array.isArray(result.state?.inboxItems))inboxItems=result.state.inboxItems;mailStatus=result.status||mailStatus;renderInbox();showToast(`同步完成：新增 ${result.added||0} 封，更新 ${result.updated||0} 封`)}
+  catch(error){showToast('同步失败：'+(error.message||error))}finally{mailSyncing=false;renderInbox()}
+}
+
+async function clearMailSettings(){
+  if(!window.confirm('确定断开 QQ 邮箱？本机已同步的邮件列表会保留，授权码会立即删除。'))return;
+  try{const result=await window.orbito?.clearMailSettings();if(!result?.ok){showToast(result?.error||'断开失败');return}mailStatus=result.status||{configured:false,provider:'qq',email:'',lastTestedAt:'',lastSyncedAt:''};closeModal();renderInbox();showToast('已断开 QQ 邮箱并删除本机授权码')}
+  catch(error){showToast('断开失败：'+(error.message||error))}
 }
 
 function localDateKey(value=new Date()){const d=new Date(value);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}
@@ -381,7 +433,7 @@ async function refreshAllTopics() {
 
 async function saveState(domains=null) {
   if (!window.orbito) return;
-  const all={tasks,inventory,inventoryImports,conversations:conversations.slice(-100),memories,briefings,topics,englishPlans,papers,events,projects,aiTasks};
+  const all={tasks,inventory,inventoryImports,conversations:conversations.slice(-100),memories,briefings,topics,englishPlans,papers,events,projects,aiTasks,inboxItems};
   const changes=Array.isArray(domains)?Object.fromEntries(domains.map(key=>[key,all[key]])):all;
   try { await (window.orbito.patchState?window.orbito.patchState(changes):window.orbito.saveState(all)); }
   catch (error) { console.error(error); showToast('本地保存失败，请稍后重试'); }
@@ -393,6 +445,7 @@ function switchView(id) {
   document.querySelector('.sidebar').classList.remove('open');
   window.scrollTo({top:0,behavior:'smooth'});
   if(id==='terminal')setTimeout(()=>initTerminal(),80);
+  if(id==='inbox')renderInbox();
 }
 
 function setTerminalStatus(running, text){const el=$('#terminalStatus');if(!el)return;el.classList.toggle('running',running);el.lastChild.textContent=text}
@@ -831,7 +884,7 @@ document.addEventListener('click',e=>{
     'quick-add':()=>formModal('task'),'add-task':()=>formModal('task'),'add-event':()=>eventModal(),'save-event':saveEvent,'add-project':()=>projectModal(),'add-diy-project':()=>projectModal('diy'),'save-project':saveProject,'add-part':()=>formModal('part'),'add-memory':memoryModal,'project-add-task':()=>formModal('task',activeProjectId),'project-add-event':()=>eventModal(null,activeProjectId),'project-link-tasks':()=>projectItemsModal('tasks'),'project-link-events':()=>projectItemsModal('events'),'project-save-items':saveProjectItems,'project-link-papers':projectPapersModal,'project-save-papers':saveProjectPapers,'project-add-bom':projectBomModal,'project-save-bom':saveProjectBom,'project-add-milestone':milestoneModal,'project-save-milestone':saveMilestone,'project-add-issue':issueModal,'project-save-issue':saveIssue,'project-add-decision':decisionModal,'project-save-decision':saveDecision,
     'paper-search':paperSearchModal,'execute-paper-search':executePaperSearch,
     'inventory-import':()=>$('#inventoryFileInput').click(),'save-part-edit':savePartEdit,'paper-import':importPapers,
-    'search':searchModal,'notifications':notificationsModal,'profile':profileModal,'api-settings':apiSettingsModal,'save-api-settings':saveAPISettings,'clear-api-key':clearAPIKey,'app-update':appUpdateModal,'update-check':checkAppUpdate,'update-download':downloadAppUpdate,'update-install':installAppUpdate,'read-notifications':()=>{const dot=document.querySelector('#notificationDot');if(dot)dot.hidden=true;closeModal();showToast('通知已全部标记为已读')},
+    'search':searchModal,'notifications':notificationsModal,'profile':profileModal,'api-settings':apiSettingsModal,'save-api-settings':saveAPISettings,'clear-api-key':clearAPIKey,'mail-settings':mailSettingsModal,'mail-save-test':saveAndTestMail,'mail-sync':syncMailInbox,'mail-clear':clearMailSettings,'app-update':appUpdateModal,'update-check':checkAppUpdate,'update-download':downloadAppUpdate,'update-install':installAppUpdate,'read-notifications':()=>{const dot=document.querySelector('#notificationDot');if(dot)dot.hidden=true;closeModal();showToast('通知已全部标记为已读')},
     'add-purchase':()=>showToast('已加入待确认采购清单'),'paper-save':()=>showToast('已加入待读列表'),'create-insight':()=>showToast('已保存为产品洞察'),
     'english-session':englishPlanModal,'save-english-plan':createEnglishPlan,'add-topic':addTopicModal,'refresh-all-topics':refreshAllTopics,'brief-read':()=>showToast('后续版本可调用语音模型朗读'),'project-add-log':projectLogModal,'project-save-log':saveProjectLog,'project-import-files':()=>attachProjectFiles('import'),'project-link-files':()=>attachProjectFiles('link'),'show-data':()=>window.orbito?.showDataFolder(),
     'terminal-restart':()=>initTerminal(true),'terminal-claude':openClaude,'terminal-context':showTerminalContext,'terminal-clear':()=>{xterm?.clear();xterm?.focus()},'terminal-stop':async()=>{await window.orbito?.terminalKill();terminalStarted=false;setTerminalStatus(false,'已结束')}
@@ -871,12 +924,14 @@ async function initialize(){
       if(Array.isArray(state.events))events=state.events;
       if(Array.isArray(state.projects))projects=state.projects.map(ensureProjectSchema);
       if(Array.isArray(state.aiTasks))aiTasks=state.aiTasks;
+      if(Array.isArray(state.inboxItems))inboxItems=state.inboxItems;
       papers.forEach(paper=>{if(!Array.isArray(paper.projectIds))paper.projectIds=[]});
+      await loadMailStatus();
       await refreshAIStatus();
       if(!state.tasks)await saveState();
     }catch(error){console.error(error);}
   }
-  renderTasks();renderInventory();renderMemories();renderCalendar();renderTopicCards();renderTopicResults();renderDashboardBriefing();renderEnglishPlans();renderPapers();renderProjects();renderAITaskCenter();
+  renderTasks();renderInventory();renderMemories();renderCalendar();renderTopicCards();renderTopicResults();renderDashboardBriefing();renderEnglishPlans();renderPapers();renderProjects();renderAITaskCenter();renderInbox();
   updateNotificationIndicator();
   updateClockGreeting();setInterval(updateClockGreeting,60*1000);
   window.orbito?.onStateChanged?.(state=>{
@@ -892,7 +947,8 @@ async function initialize(){
     if(Array.isArray(state.events))events=state.events;
     if(Array.isArray(state.projects))projects=state.projects.map(ensureProjectSchema);
     if(Array.isArray(state.aiTasks))aiTasks=state.aiTasks;
-    renderTasks();renderInventory();renderMemories();renderTopicCards();renderTopicResults();renderDashboardBriefing();renderEnglishPlans();renderPapers();renderProjects();renderAITaskCenter();if($('#project-detail').classList.contains('active'))renderProjectWorkspace();
+    if(Array.isArray(state.inboxItems))inboxItems=state.inboxItems;
+    renderTasks();renderInventory();renderMemories();renderTopicCards();renderTopicResults();renderDashboardBriefing();renderEnglishPlans();renderPapers();renderProjects();renderAITaskCenter();renderInbox();if($('#project-detail').classList.contains('active'))renderProjectWorkspace();
   });
   // Auto-generate briefing on startup if API is configured and not yet today
   setTimeout(() => autoBriefing(), 1500);

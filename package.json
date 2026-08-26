@@ -70,6 +70,7 @@
     "@homebridge/node-pty-prebuilt-multiarch": "^0.14.1",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
-    "electron-updater": "^6.8.9"
+    "electron-updater": "^6.8.9",
+    "imapflow": "^1.6.5"
   }
 }

@@ -1,10 +1,11 @@
-const { app, BrowserWindow, ipcMain, shell, dialog, Tray, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, Tray, Menu, safeStorage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const net = require('net');
 const { execFileSync, spawn } = require('child_process');
 const { autoUpdater } = require('electron-updater');
+const { ImapFlow } = require('imapflow');
 
 const legacyUserData = path.join(app.getPath('appData'), 'orbito-workbench');
 const hacherUserData = path.join(app.getPath('appData'), 'hacher-workbench');
@@ -23,6 +24,7 @@ let stateWatcherStarted = false;
 let lastRendererWriteAt = 0;
 let updaterInitialized = false;
 let updateOperation = null;
+let mailSyncOperation = null;
 let updateStatus = {
   state: 'idle',
   currentVersion: app.getVersion(),
@@ -197,7 +199,147 @@ function readState() {
   } catch (error) {
     console.error('Failed to read hacher state:', error);
   }
-  return { tasks: null, inventory: null, inventoryImports: [], conversations: [], memories: [], briefings: [], topics: [], englishPlans: [], papers: [], events: [], projects: [], aiTasks: [], _revision: 0, updatedAt: null };
+  return { tasks: null, inventory: null, inventoryImports: [], conversations: [], memories: [], briefings: [], topics: [], englishPlans: [], papers: [], events: [], projects: [], aiTasks: [], inboxItems: [], _revision: 0, updatedAt: null };
+}
+
+function getMailConfigFile() {
+  return path.join(app.getPath('userData'), 'mail-config.json');
+}
+
+function readMailConfig() {
+  try {
+    const file = getMailConfigFile();
+    if (!fs.existsSync(file)) return null;
+    const config = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (config?.provider !== 'qq' || !config.email || !config.encryptedAuthCode) return null;
+    return config;
+  } catch (error) {
+    console.error('Failed to read mail configuration:', error?.message || error);
+    return null;
+  }
+}
+
+function mailStatusSnapshot(config = readMailConfig()) {
+  return {
+    configured: Boolean(config),
+    provider: config?.provider || 'qq',
+    email: config?.email || '',
+    lastTestedAt: config?.lastTestedAt || '',
+    lastSyncedAt: config?.lastSyncedAt || '',
+  };
+}
+
+function normalizeMailCredentials(settings = {}, existing = readMailConfig()) {
+  const email = String(settings.email || existing?.email || '').trim().toLowerCase();
+  const suppliedCode = String(settings.authCode || '').replace(/\s+/g, '');
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) throw new Error('请输入有效的 QQ 邮箱地址');
+  let authCode = suppliedCode;
+  if (!authCode && existing?.email === email && existing.encryptedAuthCode) {
+    if (!safeStorage.isEncryptionAvailable()) throw new Error('当前 Windows 安全存储不可用，无法读取授权码');
+    authCode = safeStorage.decryptString(Buffer.from(existing.encryptedAuthCode, 'base64'));
+  }
+  if (authCode.length < 8 || authCode.length > 128) throw new Error('请输入 QQ 邮箱生成的授权码，不要填写 QQ 密码');
+  return { email, authCode };
+}
+
+function createQQMailClient({ email, authCode }) {
+  return new ImapFlow({
+    host: 'imap.qq.com',
+    port: 993,
+    secure: true,
+    auth: { user: email, pass: authCode },
+    logger: false,
+    connectionTimeout: 15000,
+    greetingTimeout: 15000,
+    socketTimeout: 30000,
+  });
+}
+
+function friendlyMailError(error) {
+  const message = String(error?.responseText || error?.message || error || '未知错误');
+  if (/^请输入|^当前 Windows/.test(message)) return message;
+  if (/auth|login|credential|password|authentication|535|no auth/i.test(message)) return 'QQ 邮箱拒绝登录。请确认已开启 IMAP/SMTP，并填写授权码而不是 QQ 密码。';
+  if (/timeout|timed out|etimedout/i.test(message)) return '连接 QQ 邮箱超时，请检查网络、防火墙或代理设置。';
+  if (/refused|econnrefused|socket/i.test(message)) return '无法连接 QQ 邮箱服务器，请检查网络、防火墙或代理设置。';
+  if (/certificate|tls|ssl/i.test(message)) return 'QQ 邮箱的安全连接验证失败，请检查系统时间和网络证书环境。';
+  return `连接 QQ 邮箱失败：${message.slice(0, 240)}`;
+}
+
+async function testQQMail(credentials) {
+  const client = createQQMailClient(credentials);
+  try {
+    await client.connect();
+  } finally {
+    if (client.usable) await client.logout().catch(() => {});
+  }
+}
+
+function mailAddressSummary(addresses) {
+  const list = Array.isArray(addresses) ? addresses : [];
+  return list.slice(0, 5).map(item => ({ name: String(item?.name || '').slice(0, 160), address: String(item?.address || '').slice(0, 254) }));
+}
+
+async function syncQQInbox(limit = 50) {
+  const config = readMailConfig();
+  if (!config) throw new Error('请先连接 QQ 邮箱');
+  const credentials = normalizeMailCredentials({}, config);
+  const client = createQQMailClient(credentials);
+  let lock;
+  try {
+    await client.connect();
+    lock = await client.getMailboxLock('INBOX', { readOnly: true });
+    const exists = Math.max(0, Number(client.mailbox?.exists) || 0);
+    const count = Math.max(1, Math.min(100, Number(limit) || 50));
+    const start = Math.max(1, exists - count + 1);
+    const uidValidity = String(client.mailbox?.uidValidity || '0');
+    const accountId = crypto.createHash('sha256').update(config.email).digest('hex').slice(0, 12);
+    const fetched = [];
+    if (exists > 0) {
+      for await (const message of client.fetch(`${start}:*`, { uid: true, envelope: true, flags: true, internalDate: true })) {
+        const envelope = message.envelope || {};
+        const from = mailAddressSummary(envelope.from);
+        const received = envelope.date || message.internalDate;
+        fetched.push({
+          id: `qq:${accountId}:${uidValidity}:${String(message.uid)}`,
+          provider: 'qq',
+          account: config.email,
+          mailbox: 'INBOX',
+          uid: Number(message.uid) || 0,
+          uidValidity,
+          messageId: String(envelope.messageId || '').slice(0, 500),
+          subject: String(envelope.subject || '（无主题）').slice(0, 500),
+          from,
+          sender: from[0]?.name || from[0]?.address || '未知发件人',
+          receivedAt: received instanceof Date && !Number.isNaN(received.getTime()) ? received.toISOString() : '',
+          unread: !(message.flags instanceof Set ? message.flags.has('\\Seen') : false),
+          syncedAt: new Date().toISOString(),
+        });
+      }
+    }
+    const state = readState();
+    const existingItems = new Map((Array.isArray(state.inboxItems) ? state.inboxItems : []).filter(item => item.account === config.email).map(item => [item.id, item]));
+    let added = 0;
+    let updated = 0;
+    for (const item of fetched) {
+      const previous = existingItems.get(item.id);
+      if (previous) {
+        existingItems.set(item.id, { ...previous, ...item });
+        updated++;
+      } else {
+        existingItems.set(item.id, item);
+        added++;
+      }
+    }
+    state.inboxItems = [...existingItems.values()].sort((a, b) => String(b.receivedAt || '').localeCompare(String(a.receivedAt || ''))).slice(0, 500);
+    const saved = writeState(state);
+    const nextConfig = { ...config, lastSyncedAt: new Date().toISOString() };
+    fs.writeFileSync(getMailConfigFile(), JSON.stringify(nextConfig, null, 2), 'utf8');
+    notifyStateChanged();
+    return { ok: true, added, updated, fetched: fetched.length, total: state.inboxItems.length, state: saved, status: mailStatusSnapshot(nextConfig) };
+  } finally {
+    if (lock) lock.release();
+    if (client.usable) await client.logout().catch(() => {});
+  }
 }
 
 function writeState(nextState) {
@@ -590,6 +732,7 @@ function repairWorkspaceSchema() {
     if (!part.id) { part.id = `part-${Date.now()}-${index}-${crypto.randomBytes(2).toString('hex')}`; changed = true; }
   });
   if (!Array.isArray(state.aiTasks)) { state.aiTasks = []; changed = true; }
+  if (!Array.isArray(state.inboxItems)) { state.inboxItems = []; changed = true; }
   if (changed) writeState(state);
 }
 
@@ -814,11 +957,50 @@ ipcMain.handle('state:save', (_event, state) => {
   return writeState(state);
 });
 ipcMain.handle('state:patch', (_event, changes = {}) => {
-  const allowed = ['tasks','inventory','inventoryImports','conversations','memories','briefings','topics','englishPlans','papers','events','projects','aiTasks'];
+  const allowed = ['tasks','inventory','inventoryImports','conversations','memories','briefings','topics','englishPlans','papers','events','projects','aiTasks','inboxItems'];
   const state = readState();
   for (const key of allowed) if (Object.prototype.hasOwnProperty.call(changes, key)) state[key] = changes[key];
   lastRendererWriteAt = Date.now();
   return writeState(state);
+});
+ipcMain.handle('mail:status', () => mailStatusSnapshot());
+ipcMain.handle('mail:save-and-test', async (_event, settings = {}) => {
+  try {
+    if (!safeStorage.isEncryptionAvailable()) return { ok: false, error: '当前 Windows 安全存储不可用，无法安全保存授权码' };
+    const existing = readMailConfig();
+    const credentials = normalizeMailCredentials(settings, existing);
+    await testQQMail(credentials);
+    const config = {
+      provider: 'qq',
+      email: credentials.email,
+      host: 'imap.qq.com',
+      port: 993,
+      secure: true,
+      encryptedAuthCode: safeStorage.encryptString(credentials.authCode).toString('base64'),
+      updatedAt: new Date().toISOString(),
+      lastTestedAt: new Date().toISOString(),
+      lastSyncedAt: existing?.email === credentials.email ? existing.lastSyncedAt || '' : '',
+    };
+    fs.writeFileSync(getMailConfigFile(), JSON.stringify(config, null, 2), 'utf8');
+    return { ok: true, status: mailStatusSnapshot(config) };
+  } catch (error) {
+    return { ok: false, error: friendlyMailError(error) };
+  }
+});
+ipcMain.handle('mail:sync', async (_event, options = {}) => {
+  if (mailSyncOperation) return mailSyncOperation;
+  mailSyncOperation = syncQQInbox(options.limit).catch(error => ({ ok: false, error: friendlyMailError(error) }));
+  try { return await mailSyncOperation; }
+  finally { mailSyncOperation = null; }
+});
+ipcMain.handle('mail:clear', () => {
+  try {
+    const file = getMailConfigFile();
+    if (fs.existsSync(file)) fs.unlinkSync(file);
+    return { ok: true, status: mailStatusSnapshot(null) };
+  } catch (error) {
+    return { ok: false, error: `清除邮箱配置失败：${String(error?.message || error).slice(0, 240)}` };
+  }
 });
 ipcMain.handle('data:show-folder', () => shell.showItemInFolder(getDataFile()));
 ipcMain.handle('paper:import', async () => {
