@@ -32,6 +32,7 @@
       "vendor/**",
       "tools/**",
       "CLAUDE.md",
+      "CHANGELOG.md",
       "!node_modules/@xterm/**",
       "!node_modules/@homebridge/node-pty-prebuilt-multiarch/prebuilds/**",
       "!node_modules/@homebridge/node-pty-prebuilt-multiarch/src/**",

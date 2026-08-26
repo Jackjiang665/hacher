@@ -12,7 +12,7 @@
   ![Local First](https://img.shields.io/badge/LOCAL--FIRST-Data-8aa99a?style=for-the-badge)
   ![Electron](https://img.shields.io/badge/Electron-43-47848f?style=for-the-badge&logo=electron&logoColor=white)
 
-  [下载最新版](https://github.com/Jackjiang665/hacher/releases/latest) · [功能地图](#功能地图) · [设计理念](#不只是功能集合) · [从源码运行](#从源码运行)
+  [下载最新版](https://github.com/Jackjiang665/hacher/releases/latest) · [功能地图](#功能地图) · [设计理念](#不只是功能集合) · [更新日志](./CHANGELOG.md) · [从源码运行](#从源码运行)
 </div>
 
 ---
