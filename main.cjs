@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, dialog, Tray, Menu, safeStorage } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, Tray, Menu, safeStorage, powerMonitor } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -6,6 +6,7 @@ const net = require('net');
 const { execFileSync, spawn } = require('child_process');
 const { autoUpdater } = require('electron-updater');
 const { ImapFlow } = require('imapflow');
+const { simpleParser } = require('mailparser');
 
 const legacyUserData = path.join(app.getPath('appData'), 'orbito-workbench');
 const hacherUserData = path.join(app.getPath('appData'), 'hacher-workbench');
@@ -25,6 +26,8 @@ let lastRendererWriteAt = 0;
 let updaterInitialized = false;
 let updateOperation = null;
 let mailSyncOperation = null;
+let mailSyncTimer = null;
+const mailDetailCache = new Map();
 let updateStatus = {
   state: 'idle',
   currentVersion: app.getVersion(),
@@ -226,6 +229,29 @@ function mailStatusSnapshot(config = readMailConfig()) {
     email: config?.email || '',
     lastTestedAt: config?.lastTestedAt || '',
     lastSyncedAt: config?.lastSyncedAt || '',
+    autoSync: config?.autoSync !== false,
+    syncIntervalMinutes: [1, 5, 10, 15].includes(Number(config?.syncIntervalMinutes)) ? Number(config.syncIntervalMinutes) : 5,
+    syncLimit: [20, 50, 100, 200].includes(Number(config?.syncLimit)) ? Number(config.syncLimit) : 50,
+  };
+}
+
+function writeMailConfig(config) {
+  fs.mkdirSync(path.dirname(getMailConfigFile()), { recursive: true });
+  fs.writeFileSync(getMailConfigFile(), JSON.stringify(config, null, 2), 'utf8');
+  return config;
+}
+
+function broadcastMailStatus(status = mailStatusSnapshot(), result = null) {
+  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isLoading()) mainWindow.webContents.send('mail:status-changed', { status, result });
+}
+
+function normalizeMailPreferences(settings = {}, existing = null) {
+  const interval = Number(settings.syncIntervalMinutes ?? existing?.syncIntervalMinutes ?? 5);
+  const limit = Number(settings.syncLimit ?? existing?.syncLimit ?? 50);
+  return {
+    autoSync: settings.autoSync === undefined ? existing?.autoSync !== false : Boolean(settings.autoSync),
+    syncIntervalMinutes: [1, 5, 10, 15].includes(interval) ? interval : 5,
+    syncLimit: [20, 50, 100, 200].includes(limit) ? limit : 50,
   };
 }
 
@@ -257,7 +283,7 @@ function createQQMailClient({ email, authCode }) {
 
 function friendlyMailError(error) {
   const message = String(error?.responseText || error?.message || error || '未知错误');
-  if (/^请输入|^当前 Windows/.test(message)) return message;
+  if (/^(请输入|当前 Windows|没有找到|请先连接|QQ 邮箱没有|这封邮件)/.test(message)) return message;
   if (/auth|login|credential|password|authentication|535|no auth/i.test(message)) return 'QQ 邮箱拒绝登录。请确认已开启 IMAP/SMTP，并填写授权码而不是 QQ 密码。';
   if (/timeout|timed out|etimedout/i.test(message)) return '连接 QQ 邮箱超时，请检查网络、防火墙或代理设置。';
   if (/refused|econnrefused|socket/i.test(message)) return '无法连接 QQ 邮箱服务器，请检查网络、防火墙或代理设置。';
@@ -279,6 +305,11 @@ function mailAddressSummary(addresses) {
   return list.slice(0, 5).map(item => ({ name: String(item?.name || '').slice(0, 160), address: String(item?.address || '').slice(0, 254) }));
 }
 
+function parsedAddressText(value) {
+  const rows = Array.isArray(value) ? value : value ? [value] : [];
+  return rows.map(item => item?.text || '').filter(Boolean).join(', ');
+}
+
 async function syncQQInbox(limit = 50) {
   const config = readMailConfig();
   if (!config) throw new Error('请先连接 QQ 邮箱');
@@ -289,7 +320,7 @@ async function syncQQInbox(limit = 50) {
     await client.connect();
     lock = await client.getMailboxLock('INBOX', { readOnly: true });
     const exists = Math.max(0, Number(client.mailbox?.exists) || 0);
-    const count = Math.max(1, Math.min(100, Number(limit) || 50));
+    const count = Math.max(1, Math.min(200, Number(limit) || 50));
     const start = Math.max(1, exists - count + 1);
     const uidValidity = String(client.mailbox?.uidValidity || '0');
     const accountId = crypto.createHash('sha256').update(config.email).digest('hex').slice(0, 12);
@@ -333,9 +364,85 @@ async function syncQQInbox(limit = 50) {
     state.inboxItems = [...existingItems.values()].sort((a, b) => String(b.receivedAt || '').localeCompare(String(a.receivedAt || ''))).slice(0, 500);
     const saved = writeState(state);
     const nextConfig = { ...config, lastSyncedAt: new Date().toISOString() };
-    fs.writeFileSync(getMailConfigFile(), JSON.stringify(nextConfig, null, 2), 'utf8');
+    writeMailConfig(nextConfig);
     notifyStateChanged();
     return { ok: true, added, updated, fetched: fetched.length, total: state.inboxItems.length, state: saved, status: mailStatusSnapshot(nextConfig) };
+  } finally {
+    if (lock) lock.release();
+    if (client.usable) await client.logout().catch(() => {});
+  }
+}
+
+async function runMailSync(limit, automatic = false) {
+  if (mailSyncOperation) return mailSyncOperation;
+  const config = readMailConfig();
+  const selectedLimit = Number(limit) || mailStatusSnapshot(config).syncLimit;
+  mailSyncOperation = syncQQInbox(selectedLimit).catch(error => ({ ok: false, error: friendlyMailError(error) }));
+  try {
+    const result = await mailSyncOperation;
+    broadcastMailStatus(result.status || mailStatusSnapshot(), result.ok ? { added: result.added, updated: result.updated, automatic } : { error: result.error, automatic });
+    return result;
+  } finally {
+    mailSyncOperation = null;
+  }
+}
+
+function scheduleMailAutoSync({ runSoon = false } = {}) {
+  if (mailSyncTimer) clearInterval(mailSyncTimer);
+  mailSyncTimer = null;
+  const config = readMailConfig();
+  const status = mailStatusSnapshot(config);
+  if (!config || !status.autoSync) return;
+  const intervalMs = status.syncIntervalMinutes * 60 * 1000;
+  mailSyncTimer = setInterval(() => runMailSync(status.syncLimit, true), intervalMs);
+  mailSyncTimer.unref?.();
+  if (runSoon) setTimeout(() => runMailSync(status.syncLimit, true), 3500).unref?.();
+}
+
+function syncMailIfStale() {
+  const config = readMailConfig();
+  const status = mailStatusSnapshot(config);
+  if (!config || !status.autoSync) return;
+  const last = Date.parse(status.lastSyncedAt || '') || 0;
+  if (Date.now() - last >= Math.min(status.syncIntervalMinutes * 60 * 1000, 5 * 60 * 1000)) runMailSync(status.syncLimit, true);
+}
+
+async function loadMailDetail(itemId) {
+  const state = readState();
+  const item = (Array.isArray(state.inboxItems) ? state.inboxItems : []).find(value => value.id === itemId);
+  if (!item) throw new Error('没有找到这封邮件，请重新同步');
+  const cached = mailDetailCache.get(item.id);
+  if (cached && Date.now() - cached.cachedAt < 15 * 60 * 1000) return cached.detail;
+  const config = readMailConfig();
+  if (!config || config.email !== item.account) throw new Error('请先连接这封邮件所属的 QQ 邮箱');
+  const client = createQQMailClient(normalizeMailCredentials({}, config));
+  let lock;
+  try {
+    await client.connect();
+    lock = await client.getMailboxLock(item.mailbox || 'INBOX', { readOnly: true });
+    const maxSourceBytes = 12 * 1024 * 1024;
+    const message = await client.fetchOne(String(item.uid), { source: { maxLength: maxSourceBytes }, size: true }, { uid: true });
+    if (!message?.source) throw new Error('QQ 邮箱没有返回邮件正文');
+    if (Number(message.size) > maxSourceBytes) throw new Error('这封邮件超过 12 MB，请暂时在 QQ 邮箱中查看');
+    const parsed = await simpleParser(message.source, { skipImageLinks: true });
+    const detail = {
+      id: item.id,
+      subject: String(parsed.subject || item.subject || '（无主题）').slice(0, 1000),
+      from: parsedAddressText(parsed.from) || item.sender || '未知发件人',
+      to: parsedAddressText(parsed.to),
+      cc: parsedAddressText(parsed.cc),
+      date: parsed.date instanceof Date ? parsed.date.toISOString() : item.receivedAt || '',
+      text: String(parsed.text || '').trim().slice(0, 200000),
+      attachments: (parsed.attachments || []).slice(0, 50).map(attachment => ({
+        name: String(attachment.filename || '未命名附件').slice(0, 500),
+        contentType: String(attachment.contentType || 'application/octet-stream').slice(0, 200),
+        size: Math.max(0, Number(attachment.size) || 0),
+      })),
+    };
+    if (!detail.text) detail.text = '这封邮件没有可显示的纯文本正文。';
+    mailDetailCache.set(item.id, { cachedAt: Date.now(), detail });
+    while (mailDetailCache.size > 20) mailDetailCache.delete(mailDetailCache.keys().next().value);
+    return detail;
   } finally {
     if (lock) lock.release();
     if (client.usable) await client.logout().catch(() => {});
@@ -604,6 +711,7 @@ function createWindow() {
       mainWindow.hide();
     }
   });
+  mainWindow.on('show', () => syncMailIfStale());
   startStateWatcher();
 }
 
@@ -890,6 +998,8 @@ app.whenReady().then(async () => {
   createTray();
   createWindow();
   initializeUpdater();
+  scheduleMailAutoSync({ runSoon: true });
+  powerMonitor.on('resume', () => syncMailIfStale());
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
@@ -909,6 +1019,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   app.isQuitting = true;
+  if (mailSyncTimer) clearInterval(mailSyncTimer);
 });
 
 ipcMain.handle('update:get-status', () => updateStatusSnapshot());
@@ -980,23 +1091,29 @@ ipcMain.handle('mail:save-and-test', async (_event, settings = {}) => {
       updatedAt: new Date().toISOString(),
       lastTestedAt: new Date().toISOString(),
       lastSyncedAt: existing?.email === credentials.email ? existing.lastSyncedAt || '' : '',
+      ...normalizeMailPreferences(settings, existing),
     };
-    fs.writeFileSync(getMailConfigFile(), JSON.stringify(config, null, 2), 'utf8');
+    writeMailConfig(config);
+    scheduleMailAutoSync({ runSoon: true });
     return { ok: true, status: mailStatusSnapshot(config) };
   } catch (error) {
     return { ok: false, error: friendlyMailError(error) };
   }
 });
 ipcMain.handle('mail:sync', async (_event, options = {}) => {
-  if (mailSyncOperation) return mailSyncOperation;
-  mailSyncOperation = syncQQInbox(options.limit).catch(error => ({ ok: false, error: friendlyMailError(error) }));
-  try { return await mailSyncOperation; }
-  finally { mailSyncOperation = null; }
+  return runMailSync(options.limit);
+});
+ipcMain.handle('mail:detail', async (_event, itemId) => {
+  try { return { ok: true, detail: await loadMailDetail(String(itemId || '')) }; }
+  catch (error) { return { ok: false, error: friendlyMailError(error) }; }
 });
 ipcMain.handle('mail:clear', () => {
   try {
     const file = getMailConfigFile();
     if (fs.existsSync(file)) fs.unlinkSync(file);
+    if (mailSyncTimer) clearInterval(mailSyncTimer);
+    mailSyncTimer = null;
+    mailDetailCache.clear();
     return { ok: true, status: mailStatusSnapshot(null) };
   } catch (error) {
     return { ok: false, error: `清除邮箱配置失败：${String(error?.message || error).slice(0, 240)}` };

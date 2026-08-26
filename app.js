@@ -12,8 +12,9 @@ let events = [];
 let projects = [];
 let aiTasks = [];
 let inboxItems = [];
-let mailStatus = {configured:false,provider:'qq',email:'',lastTestedAt:'',lastSyncedAt:''};
+let mailStatus = {configured:false,provider:'qq',email:'',lastTestedAt:'',lastSyncedAt:'',autoSync:true,syncIntervalMinutes:5,syncLimit:50};
 let mailSyncing = false;
+let inboxFilter = 'pending';
 let activeAITaskId = null;
 let agentContextSelection = 'workspace';
 let editingEventId = null;
@@ -39,7 +40,7 @@ const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
 const h = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const setCountBadge = (id, count) => { const el=document.getElementById(id); if(el){el.textContent=count;el.hidden=count===0} };
-const updateNotificationIndicator = () => { const el=$('#notificationDot'); if(el)el.hidden=!(tasks.some(t=>!t.done)||inventory.some(p=>Number(p.qty)<=2)); };
+const updateNotificationIndicator = () => { const el=$('#notificationDot');const pendingMail=mailStatus.configured&&inboxItems.some(item=>item.account===mailStatus.email&&!item.processedAt);if(el)el.hidden=!(tasks.some(t=>!t.done)||inventory.some(p=>Number(p.qty)<=2)||pendingMail); };
 
 function greetingForHour(hour){if(hour>=5&&hour<9)return'早上好';if(hour<12)return'上午好';if(hour<14)return'中午好';if(hour<18)return'下午好';if(hour<23)return'晚上好';return'夜深了'}
 function updateClockGreeting(){
@@ -196,13 +197,23 @@ function inboxDate(value){
 
 function renderInbox(){
   const status=$('#inboxStatus');const list=$('#inboxList');if(!status||!list)return;
-  const visibleItems=mailStatus.configured?inboxItems.filter(item=>item.account===mailStatus.email):[];const unread=visibleItems.filter(item=>item.unread).length;
-  setCountBadge('inboxBadge',unread);$('#inboxCount').textContent=`${visibleItems.length} 封`;
-  status.innerHTML=`<article><span class="${mailStatus.configured?'connected':''}">${mailStatus.configured?'✓':'○'}</span><div><small>邮箱连接</small><b>${mailStatus.configured?h(mailStatus.email):'尚未连接'}</b></div></article><article><span>↻</span><div><small>上次同步</small><b>${mailStatus.lastSyncedAt?h(inboxDate(mailStatus.lastSyncedAt)):'尚未同步'}</b></div></article><article><span>●</span><div><small>未读邮件</small><b>${unread} 封</b></div></article>`;
-  const syncButton=$('#mailSyncButton');if(syncButton){syncButton.disabled=mailSyncing||!mailStatus.configured;syncButton.textContent=mailSyncing?'同步中…':'↻ 同步邮件'}
+  const accountItems=mailStatus.configured?inboxItems.filter(item=>item.account===mailStatus.email):[];const unread=accountItems.filter(item=>item.unread).length;const pending=accountItems.filter(item=>!item.processedAt).length;
+  const visibleItems=accountItems.filter(item=>inboxFilter==='all'||(inboxFilter==='processed'?Boolean(item.processedAt):!item.processedAt));
+  setCountBadge('inboxBadge',pending);$('#inboxCount').textContent=`${visibleItems.length} 封`;
+  $$('.inbox-tabs [data-inbox-filter]').forEach(button=>button.classList.toggle('active',button.dataset.inboxFilter===inboxFilter));
+  status.innerHTML=`<article><span class="${mailStatus.configured?'connected':''}">${mailStatus.configured?'✓':'○'}</span><div><small>邮箱连接</small><b>${mailStatus.configured?h(mailStatus.email):'尚未连接'}</b></div></article><article><span>↻</span><div><small>${mailStatus.autoSync?'自动同步':'手动同步'}</small><b>${mailStatus.lastSyncedAt?h(inboxDate(mailStatus.lastSyncedAt)):'尚未同步'}${mailStatus.autoSync?` · ${Number(mailStatus.syncIntervalMinutes)||5} 分钟`:''}</b></div></article><article><span>●</span><div><small>待处理 / QQ 未读</small><b>${pending} / ${unread} 封</b></div></article>`;
+  const syncButton=$('#mailSyncButton');if(syncButton){syncButton.disabled=mailSyncing||!mailStatus.configured;syncButton.textContent=mailSyncing?'同步中…':`↻ 同步 ${Number(mailStatus.syncLimit)||50} 封`}
   if(!mailStatus.configured){list.innerHTML='<div class="inbox-empty"><span>⌑</span><b>先连接你的 QQ 邮箱</b><small>hacher 只读取最近邮件的发件人、主题、时间和未读状态，不读取正文，也不会改变邮箱内容。</small><button data-action="mail-settings">连接 QQ 邮箱</button></div>';return}
-  if(!visibleItems.length){list.innerHTML='<div class="inbox-empty"><span>↻</span><b>还没有同步邮件</b><small>点击“同步邮件”，从 QQ 邮箱只读获取最近 50 封邮件。</small><button data-action="mail-sync">开始第一次同步</button></div>';return}
-  list.innerHTML=`<div class="inbox-list">${visibleItems.map(item=>{const address=item.from?.[0]?.address||'';return `<article class="inbox-row ${item.unread?'unread':''}"><span class="inbox-unread-dot"></span><div class="inbox-sender"><b>${h(item.sender||'未知发件人')}</b><small>${h(address)}</small></div><div class="inbox-subject"><b>${h(item.subject||'（无主题）')}</b><small>仅同步邮件摘要信息 · 正文尚未读取</small></div><time>${h(inboxDate(item.receivedAt))}</time></article>`}).join('')}</div>`;
+  if(!accountItems.length){list.innerHTML=`<div class="inbox-empty"><span>↻</span><b>还没有同步邮件</b><small>点击“同步邮件”，从 QQ 邮箱只读获取最近 ${Number(mailStatus.syncLimit)||50} 封邮件。</small><button data-action="mail-sync">开始第一次同步</button></div>`;return}
+  if(!visibleItems.length){list.innerHTML=`<div class="inbox-empty compact"><span>✓</span><b>${inboxFilter==='pending'?'待处理邮件已经清空':'这里还没有邮件'}</b><small>${inboxFilter==='pending'?'已处理的邮件可以在“已处理”中找到。':'切换其他分类查看邮件。'}</small></div>`;renderDashboardInbox();return}
+  list.innerHTML=`<div class="inbox-list">${visibleItems.map(item=>{const address=item.from?.[0]?.address||'';return `<article class="inbox-row ${item.unread?'unread':''} ${item.processedAt?'processed':''}" data-mail-open="${h(item.id)}"><span class="inbox-unread-dot"></span><div class="inbox-sender"><b>${h(item.sender||'未知发件人')}</b><small>${h(address)}</small></div><div class="inbox-subject"><b>${h(item.subject||'（无主题）')}</b><small>${item.processedAt?'已处理 · ':''}点击按需读取正文</small></div><time>${h(inboxDate(item.receivedAt))}</time><button class="inbox-process-btn" data-mail-process="${h(item.id)}">${item.processedAt?'移回待处理':'标记已处理'}</button></article>`}).join('')}</div>`;
+  renderDashboardInbox();updateNotificationIndicator();
+}
+
+function renderDashboardInbox(){
+  const card=$('#dashboardInbox');if(!card)return;const accountItems=mailStatus.configured?inboxItems.filter(item=>item.account===mailStatus.email):[];const pending=accountItems.filter(item=>!item.processedAt);const recent=pending.slice(0,3);
+  if(!mailStatus.configured){card.innerHTML='<div class="card-title"><div><p class="label">AI 收件箱</p><h2>尚未连接邮箱</h2></div><button class="text-btn" data-view-link="inbox">连接 QQ 邮箱 →</button></div><p class="dashboard-inbox-empty">连接后，这里只显示需要你处理的邮件摘要。</p>';return}
+  card.innerHTML=`<div class="card-title"><div><p class="label">AI 收件箱</p><h2>${pending.length?`${pending.length} 封待处理`:'收件箱已清空'}</h2></div><button class="text-btn" data-view-link="inbox">进入收件箱 →</button></div>${recent.length?`<div class="dashboard-mail-list">${recent.map(item=>`<button data-mail-open="${h(item.id)}"><span><b>${h(item.subject||'（无主题）')}</b><small>${h(item.sender||'未知发件人')}</small></span><time>${h(inboxDate(item.receivedAt))}</time></button>`).join('')}</div>`:'<p class="dashboard-inbox-empty">目前没有需要处理的邮件。</p>'}`;
 }
 
 async function loadMailStatus(){
@@ -212,29 +223,40 @@ async function loadMailStatus(){
 
 async function mailSettingsModal(){
   await loadMailStatus();
-  showModal(`<div class="modal-icon">⌑</div><h2>连接 QQ 邮箱</h2><p>请先在 QQ 邮箱中开启 IMAP/SMTP 服务并生成授权码。这里填写的是授权码，不是 QQ 密码。</p><div class="api-status ${mailStatus.configured?'connected':''}"><span></span><b>${mailStatus.configured?'已连接':'尚未连接'}</b><small>${mailStatus.configured?'留空授权码可继续使用本机已保存的配置':'连接测试通过后才会保存'}</small></div><div class="mail-privacy-note"><b>只读边界</b><span>当前版本只同步最近邮件的发件人、主题、时间与未读状态；不读取正文、不下载附件、不发送邮件、不改变已读状态。</span></div><div class="form-grid"><div class="form-field full"><label>QQ 邮箱地址</label><input id="mailSettingsEmail" type="email" value="${h(mailStatus.email||'')}" placeholder="name@qq.com" autocomplete="username" spellcheck="false"></div><div class="form-field full"><label>IMAP 授权码</label><input id="mailSettingsCode" type="password" placeholder="${mailStatus.configured?'已加密保存，留空即可':'粘贴 QQ 邮箱生成的授权码'}" autocomplete="new-password" spellcheck="false"></div></div><a class="api-help-link" href="https://mail.qq.com/" target="_blank" rel="noreferrer">打开 QQ 邮箱设置 →</a><div class="modal-actions">${mailStatus.configured?'<button class="danger-modal-btn" data-action="mail-clear">断开连接</button>':''}<button class="cancel" data-action="close-modal">取消</button><button class="confirm" data-action="mail-save-test">保存并测试</button></div>`);
+  showModal(`<div class="modal-icon">⌑</div><h2>QQ 邮箱与同步</h2><p>授权码由 Windows 加密保存。邮件正文仅在打开时按需读取，不写入长期工作台数据。</p><div class="api-status ${mailStatus.configured?'connected':''}"><span></span><b>${mailStatus.configured?'已连接':'尚未连接'}</b><small>${mailStatus.configured?'留空授权码可继续使用本机已保存的配置':'请填写 QQ 邮箱生成的授权码，不是 QQ 密码'}</small></div><div class="form-grid"><div class="form-field full"><label>QQ 邮箱地址</label><input id="mailSettingsEmail" type="email" value="${h(mailStatus.email||'')}" placeholder="name@qq.com" autocomplete="username" spellcheck="false"></div><div class="form-field full"><label>IMAP 授权码</label><input id="mailSettingsCode" type="password" placeholder="${mailStatus.configured?'已加密保存，留空即可':'粘贴 QQ 邮箱生成的授权码'}" autocomplete="new-password" spellcheck="false"></div><div class="form-field"><label>每次检查最近邮件</label><select id="mailSyncLimit">${[20,50,100,200].map(value=>`<option value="${value}" ${Number(mailStatus.syncLimit)===value?'selected':''}>${value} 封</option>`).join('')}</select></div><div class="form-field"><label>自动同步间隔</label><select id="mailSyncInterval">${[1,5,10,15].map(value=>`<option value="${value}" ${Number(mailStatus.syncIntervalMinutes)===value?'selected':''}>${value} 分钟</option>`).join('')}</select></div><label class="mail-auto-toggle full"><input id="mailAutoSync" type="checkbox" ${mailStatus.autoSync!==false?'checked':''}><span><b>自动同步新邮件</b><small>软件运行或最小化到托盘时继续检查；启动和电脑唤醒后也会补同步。</small></span></label></div><div class="mail-privacy-note"><b>只读边界</b><span>不会发送邮件或改变 QQ 邮箱的已读状态；“已处理”只保存在 hacher 本地。</span></div><a class="api-help-link" href="https://mail.qq.com/" target="_blank" rel="noreferrer">打开 QQ 邮箱设置 →</a><div class="modal-actions">${mailStatus.configured?'<button class="danger-modal-btn" data-action="mail-clear">断开连接</button>':''}<button class="cancel" data-action="close-modal">取消</button><button class="confirm" data-action="mail-save-test">保存并测试</button></div>`);
   setTimeout(()=>$('#mailSettingsEmail')?.focus(),100);
 }
 
 async function saveAndTestMail(){
-  const email=$('#mailSettingsEmail')?.value.trim()||'';const authCode=$('#mailSettingsCode')?.value.trim()||'';const button=$('[data-action="mail-save-test"]');
+  const email=$('#mailSettingsEmail')?.value.trim()||'';const authCode=$('#mailSettingsCode')?.value.trim()||'';const autoSync=Boolean($('#mailAutoSync')?.checked);const syncIntervalMinutes=Number($('#mailSyncInterval')?.value)||5;const syncLimit=Number($('#mailSyncLimit')?.value)||50;const button=$('[data-action="mail-save-test"]');
   if(!email){showToast('请输入 QQ 邮箱地址');return}
   if(button){button.disabled=true;button.textContent='正在测试…'}
-  try{const result=await window.orbito?.saveAndTestMail({email,authCode});if(!result?.ok){showToast(result?.error||'连接测试失败');return}mailStatus=result.status;closeModal();renderInbox();showToast('QQ 邮箱已连接，可以开始同步')}
+  try{const result=await window.orbito?.saveAndTestMail({email,authCode,autoSync,syncIntervalMinutes,syncLimit});if(!result?.ok){showToast(result?.error||'连接测试失败');return}mailStatus=result.status;closeModal();renderInbox();renderDashboardInbox();showToast(autoSync?'邮箱设置已保存，自动同步已开启':'邮箱设置已保存')}
   catch(error){showToast('连接失败：'+(error.message||error))}finally{if(button){button.disabled=false;button.textContent='保存并测试'}}
 }
 
 async function syncMailInbox(){
   if(mailSyncing)return;if(!mailStatus.configured){mailSettingsModal();return}
   mailSyncing=true;renderInbox();
-  try{const result=await window.orbito?.syncMailInbox({limit:50});if(!result?.ok){showToast(result?.error||'同步失败');return}if(Array.isArray(result.state?.inboxItems))inboxItems=result.state.inboxItems;mailStatus=result.status||mailStatus;renderInbox();showToast(`同步完成：新增 ${result.added||0} 封，更新 ${result.updated||0} 封`)}
+  try{const result=await window.orbito?.syncMailInbox({limit:Number(mailStatus.syncLimit)||50});if(!result?.ok){showToast(result?.error||'同步失败');return}if(Array.isArray(result.state?.inboxItems))inboxItems=result.state.inboxItems;mailStatus=result.status||mailStatus;renderInbox();showToast(`同步完成：新增 ${result.added||0} 封，更新 ${result.updated||0} 封`)}
   catch(error){showToast('同步失败：'+(error.message||error))}finally{mailSyncing=false;renderInbox()}
 }
 
 async function clearMailSettings(){
   if(!window.confirm('确定断开 QQ 邮箱？本机已同步的邮件列表会保留，授权码会立即删除。'))return;
-  try{const result=await window.orbito?.clearMailSettings();if(!result?.ok){showToast(result?.error||'断开失败');return}mailStatus=result.status||{configured:false,provider:'qq',email:'',lastTestedAt:'',lastSyncedAt:''};closeModal();renderInbox();showToast('已断开 QQ 邮箱并删除本机授权码')}
+  try{const result=await window.orbito?.clearMailSettings();if(!result?.ok){showToast(result?.error||'断开失败');return}mailStatus=result.status||{configured:false,provider:'qq',email:'',lastTestedAt:'',lastSyncedAt:'',autoSync:true,syncIntervalMinutes:5,syncLimit:50};closeModal();renderInbox();renderDashboardInbox();showToast('已断开 QQ 邮箱并删除本机授权码')}
   catch(error){showToast('断开失败：'+(error.message||error))}
+}
+
+async function openMailDetail(itemId){
+  const item=inboxItems.find(value=>value.id===itemId);if(!item)return;
+  showModal(`<div class="mail-detail-loading"><span>⌑</span><h2>${h(item.subject||'（无主题）')}</h2><p>正在从 QQ 邮箱按需读取正文…</p></div>` ,true);
+  try{const result=await window.orbito?.getMailDetail(itemId);if(!result?.ok){showModal(`<div class="modal-icon">!</div><h2>无法打开邮件</h2><p>${h(result?.error||'读取正文失败')}</p><div class="modal-actions"><button class="confirm" data-action="close-modal">关闭</button></div>`);return}const detail=result.detail;const attachments=detail.attachments?.length?`<div class="mail-attachments"><b>附件（仅显示信息）</b>${detail.attachments.map(file=>`<div><span>▤</span><p><b>${h(file.name)}</b><small>${h(file.contentType)} · ${h(formatFileSize(file.size))}</small></p></div>`).join('')}</div>`:'';showModal(`<div class="mail-detail-head"><p>${h(detail.from)}</p><h2>${h(detail.subject)}</h2><small>${h(detail.date?new Date(detail.date).toLocaleString('zh-CN'):'时间未知')}${detail.to?` · 收件人 ${h(detail.to)}`:''}</small></div><div class="mail-detail-body">${h(detail.text).replace(/\n/g,'<br>')}</div>${attachments}<div class="modal-actions"><button class="cancel" data-action="close-modal">关闭</button><button class="confirm" data-mail-process="${h(item.id)}">${item.processedAt?'移回待处理':'标记已处理'}</button></div>`,true)}
+  catch(error){showToast('读取邮件失败：'+(error.message||error))}
+}
+
+async function toggleMailProcessed(itemId){
+  const item=inboxItems.find(value=>value.id===itemId);if(!item)return;item.processedAt=item.processedAt?null:new Date().toISOString();await saveState(['inboxItems']);renderInbox();renderDashboardInbox();showToast(item.processedAt?'已移入“已处理”':'已移回待处理');if($('#modalWrap').classList.contains('show'))closeModal();
 }
 
 function localDateKey(value=new Date()){const d=new Date(value);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}
@@ -833,6 +855,9 @@ async function simulateAI(text, attachment=null){
 }
 
 document.addEventListener('click',e=>{
+  const inboxFilterButton=e.target.closest('[data-inbox-filter]');if(inboxFilterButton){inboxFilter=inboxFilterButton.dataset.inboxFilter;renderInbox();return}
+  const mailProcess=e.target.closest('[data-mail-process]');if(mailProcess){e.stopPropagation();toggleMailProcessed(mailProcess.dataset.mailProcess);return}
+  const mailOpen=e.target.closest('[data-mail-open]');if(mailOpen){openMailDetail(mailOpen.dataset.mailOpen);return}
   const agentSuggestion=e.target.closest('[data-agent-suggestion]');if(agentSuggestion){$('#agentRequestInput').value=agentSuggestion.dataset.agentSuggestion;$('#agentRequestInput').focus();return}
   const aiPane=e.target.closest('[data-ai-pane]');if(aiPane){setAIPane(aiPane.dataset.aiPane);return}
   const aiTaskSelect=e.target.closest('[data-ai-task-select]');if(aiTaskSelect){activeAITaskId=aiTaskSelect.dataset.aiTaskSelect;renderAITaskCenter();return}
@@ -908,6 +933,7 @@ async function initialize(){
     try{
       appUpdateStatus=await window.orbito.getUpdateStatus()||appUpdateStatus;
       if(!updateStatusUnsubscribe)updateStatusUnsubscribe=window.orbito.onUpdateStatus(status=>renderAppUpdateStatus(status));
+      window.orbito.onMailStatus?.(payload=>{if(payload?.status)mailStatus=payload.status;if(payload?.result?.added>0)showToast(`收到 ${payload.result.added} 封新邮件`);renderInbox();renderDashboardInbox()});
       const state=await window.orbito.getState();
       if(Array.isArray(state.tasks))tasks=state.tasks;
       if(Array.isArray(state.inventory))inventory=state.inventory;
@@ -931,7 +957,7 @@ async function initialize(){
       if(!state.tasks)await saveState();
     }catch(error){console.error(error);}
   }
-  renderTasks();renderInventory();renderMemories();renderCalendar();renderTopicCards();renderTopicResults();renderDashboardBriefing();renderEnglishPlans();renderPapers();renderProjects();renderAITaskCenter();renderInbox();
+  renderTasks();renderInventory();renderMemories();renderCalendar();renderTopicCards();renderTopicResults();renderDashboardBriefing();renderEnglishPlans();renderPapers();renderProjects();renderAITaskCenter();renderInbox();renderDashboardInbox();
   updateNotificationIndicator();
   updateClockGreeting();setInterval(updateClockGreeting,60*1000);
   window.orbito?.onStateChanged?.(state=>{
@@ -948,7 +974,7 @@ async function initialize(){
     if(Array.isArray(state.projects))projects=state.projects.map(ensureProjectSchema);
     if(Array.isArray(state.aiTasks))aiTasks=state.aiTasks;
     if(Array.isArray(state.inboxItems))inboxItems=state.inboxItems;
-    renderTasks();renderInventory();renderMemories();renderTopicCards();renderTopicResults();renderDashboardBriefing();renderEnglishPlans();renderPapers();renderProjects();renderAITaskCenter();renderInbox();if($('#project-detail').classList.contains('active'))renderProjectWorkspace();
+    renderTasks();renderInventory();renderMemories();renderTopicCards();renderTopicResults();renderDashboardBriefing();renderEnglishPlans();renderPapers();renderProjects();renderAITaskCenter();renderInbox();renderDashboardInbox();if($('#project-detail').classList.contains('active'))renderProjectWorkspace();
   });
   // Auto-generate briefing on startup if API is configured and not yet today
   setTimeout(() => autoBriefing(), 1500);

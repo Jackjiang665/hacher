@@ -13,7 +13,13 @@ contextBridge.exposeInMainWorld('orbito', {
   getMailStatus: () => ipcRenderer.invoke('mail:status'),
   saveAndTestMail: (settings) => ipcRenderer.invoke('mail:save-and-test', settings),
   syncMailInbox: (options) => ipcRenderer.invoke('mail:sync', options),
+  getMailDetail: (itemId) => ipcRenderer.invoke('mail:detail', itemId),
   clearMailSettings: () => ipcRenderer.invoke('mail:clear'),
+  onMailStatus: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('mail:status-changed', handler);
+    return () => ipcRenderer.removeListener('mail:status-changed', handler);
+  },
   getUpdateStatus: () => ipcRenderer.invoke('update:get-status'),
   checkForUpdates: () => ipcRenderer.invoke('update:check'),
   downloadUpdate: () => ipcRenderer.invoke('update:download'),
