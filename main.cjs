@@ -7,6 +7,7 @@ const { execFileSync, spawn } = require('child_process');
 const { autoUpdater } = require('electron-updater');
 const { ImapFlow } = require('imapflow');
 const { simpleParser } = require('mailparser');
+const { prepareMailContent } = require('./mail-content.cjs');
 
 const legacyUserData = path.join(app.getPath('appData'), 'orbito-workbench');
 const hacherUserData = path.join(app.getPath('appData'), 'hacher-workbench');
@@ -424,7 +425,8 @@ async function loadMailDetail(itemId) {
     const message = await client.fetchOne(String(item.uid), { source: { maxLength: maxSourceBytes }, size: true }, { uid: true });
     if (!message?.source) throw new Error('QQ 邮箱没有返回邮件正文');
     if (Number(message.size) > maxSourceBytes) throw new Error('这封邮件超过 12 MB，请暂时在 QQ 邮箱中查看');
-    const parsed = await simpleParser(message.source, { skipImageLinks: true });
+    const parsed = await simpleParser(message.source);
+    const content = prepareMailContent(parsed);
     const detail = {
       id: item.id,
       subject: String(parsed.subject || item.subject || '（无主题）').slice(0, 1000),
@@ -432,14 +434,16 @@ async function loadMailDetail(itemId) {
       to: parsedAddressText(parsed.to),
       cc: parsedAddressText(parsed.cc),
       date: parsed.date instanceof Date ? parsed.date.toISOString() : item.receivedAt || '',
-      text: String(parsed.text || '').trim().slice(0, 200000),
+      text: content.text,
+      html: content.html,
+      blockedExternalImages: content.blockedExternalImages,
+      inlineImagesOmitted: content.inlineImagesOmitted,
       attachments: (parsed.attachments || []).slice(0, 50).map(attachment => ({
         name: String(attachment.filename || '未命名附件').slice(0, 500),
         contentType: String(attachment.contentType || 'application/octet-stream').slice(0, 200),
         size: Math.max(0, Number(attachment.size) || 0),
       })),
     };
-    if (!detail.text) detail.text = '这封邮件没有可显示的纯文本正文。';
     mailDetailCache.set(item.id, { cachedAt: Date.now(), detail });
     while (mailDetailCache.size > 20) mailDetailCache.delete(mailDetailCache.keys().next().value);
     return detail;
