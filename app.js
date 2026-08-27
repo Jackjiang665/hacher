@@ -14,7 +14,7 @@ let aiTasks = [];
 let inboxItems = [];
 let mailStatus = {configured:false,provider:'qq',email:'',lastTestedAt:'',lastSyncedAt:'',autoSync:true,syncIntervalMinutes:5,syncLimit:50};
 let mailSyncing = false;
-let inboxFilter = 'pending';
+let inboxFilter = 'important';
 let activeAITaskId = null;
 let agentContextSelection = 'workspace';
 let editingEventId = null;
@@ -35,12 +35,12 @@ let xterm = null;
 let fitAddon = null;
 let terminalStarted = false;
 let terminalStartPromise = null;
-const viewNames = { dashboard:'工作台总览',today:'今日待办',calendar:'日程安排',projects:'项目中心','project-detail':'项目工作区',papers:'论文与科研',english:'英语学习',briefing:'每日情报',diy:'DIY 项目',inventory:'电子元件库',inbox:'AI 收件箱',memory:'AI 记忆中心',terminal:'Agent 终端' };
+const viewNames = { dashboard:'工作台总览',today:'今日待办',calendar:'日程安排',projects:'项目中心','project-detail':'项目工作区',papers:'论文与科研',english:'英语学习',briefing:'每日情报',diy:'DIY 项目',inventory:'电子元件库',inbox:'消息中心',memory:'AI 记忆中心',terminal:'Agent 终端' };
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
 const h = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const setCountBadge = (id, count) => { const el=document.getElementById(id); if(el){el.textContent=count;el.hidden=count===0} };
-const updateNotificationIndicator = () => { const el=$('#notificationDot');const pendingMail=mailStatus.configured&&inboxItems.some(item=>item.account===mailStatus.email&&!item.processedAt);if(el)el.hidden=!(tasks.some(t=>!t.done)||inventory.some(p=>Number(p.qty)<=2)||pendingMail); };
+const updateNotificationIndicator = () => { const el=$('#notificationDot');if(!el)return;const count=buildMessageItems().filter(item=>item.important&&!item.processed).length;el.hidden=count===0;el.title=count?`${count} 条重要消息`:''; };
 
 function greetingForHour(hour){if(hour>=5&&hour<9)return'早上好';if(hour<12)return'上午好';if(hour<14)return'中午好';if(hour<18)return'下午好';if(hour<23)return'晚上好';return'夜深了'}
 function updateClockGreeting(){
@@ -93,7 +93,8 @@ function renderTasks() {
   const visibleTasks = tasks.filter(t => taskFilter === 'all' ? !t.done&&taskScheduledDate(t)===today : taskFilter === 'done' ? t.done : !t.done);
   $('#fullTaskList').innerHTML = visibleTasks.length ? visibleTasks.map(t => `<div class="task-row ${t.done?'done':''}"><button class="task-check" data-task="${t.id}">${t.done?'✓':''}</button><div><b>${h(t.title)}</b><small>${h(taskMeta(t))}</small></div><time>${h(taskDateLabel(t))}</time></div>`).join('') : '<div class="memory-empty"><span>✓</span><b>这里暂时没有任务</b><small>切换其他分类，或创建一项新任务</small></div>';
   setCountBadge('todoBadge',openTasks.length);
-  $('#dashboardSummary').textContent=openTasks.length?`你有 ${openTasks.length} 项未完成任务。其他模块会在录入真实数据后自动汇总。`:'目前还没有个人数据。创建任务或项目后，这里会自动汇总。';
+  const workspacePieces=[projects.length?`${projects.length} 个项目`:'',inventory.length?`${inventory.length} 种元器件`:'',events.length?`${events.length} 项日程`:''].filter(Boolean);
+  $('#dashboardSummary').textContent=openTasks.length?`你有 ${openTasks.length} 项未完成任务。`:(workspacePieces.length?`今日暂无待办，工作台正在管理 ${workspacePieces.join('、')}。`:'目前还没有个人数据。创建任务或项目后，这里会自动汇总。');
   $('#taskCompletionPercent').textContent=weekTasks.length?completionPercent:'—';
   $('#taskCompletionSummary').textContent=weekTasks.length?`本周已完成 ${weekCompleted} / ${weekTasks.length} 项任务`:'本周暂无任务';
   $('#taskCompletionRing').classList.toggle('empty',!weekTasks.length);
@@ -148,6 +149,7 @@ function renderInventory() {
   ['inventoryTypes','dashInventoryTypes'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent=inventory.length});
   ['totalParts','dashInventoryTotal'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent=total});
   ['lowStockCount','dashLowStock'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent=low});
+  const miniHint=$('#inventoryMiniHint');if(miniHint)miniHint.innerHTML=!inventory.length?'<div class="dashboard-quiet-state"><span>⌘</span><small>仓库还是空的，可以手动添加或用截图识别入库。</small></div>':low?`<button class="dashboard-inventory-alert" data-view-link="inventory"><span>!</span><div><b>${low} 种元器件库存偏低</b><small>点击进入仓库核对数量</small></div><i>›</i></button>`:'<div class="dashboard-quiet-state good"><span>✓</span><small>当前库存状态正常。</small></div>';
   setCountBadge('inventoryBadge',inventory.length);
   updateNotificationIndicator();
 }
@@ -195,25 +197,32 @@ function inboxDate(value){
   return sameDay?date.toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'}):date.toLocaleDateString('zh-CN',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
 }
 
+const messageTypeMeta={mail:{label:'邮件',icon:'✉'},project:{label:'项目',icon:'▦'},inventory:{label:'库存',icon:'⌘'},ai:{label:'AI 消息',icon:'✦'},update:{label:'版本更新',icon:'↑'}};
+function messageTimestamp(value){const parsed=Date.parse(value||'');return Number.isFinite(parsed)?parsed:0}
+function buildMessageItems(){
+  const rows=[];const now=Date.now();const importantMailPattern=/(回复|截止|尽快|紧急|会议|实验|项目|合同|报价|付款|审核|提交|导师|老师|面试|异常|安全)/i;const lowPriorityMailPattern=/(<广告>|广告|unsubscribe|newsletter|promotion|促销|优惠|新品|special announcement|introducing|weekly digest|每日推荐)/i;const automatedSenderPattern=/(?:no-?reply|notification|newsletter|marketing|mailer|news)@/i;
+  if(['available','downloaded'].includes(appUpdateStatus.state)&&appUpdateStatus.availableVersion){const downloaded=appUpdateStatus.state==='downloaded';rows.push({id:`update:${appUpdateStatus.availableVersion}`,type:'update',title:downloaded?`v${appUpdateStatus.availableVersion} 已准备安装`:`hacher v${appUpdateStatus.availableVersion} 可以更新`,summary:downloaded?'更新已经下载完成，由你决定何时重启安装':'查看更新内容，由你决定是否下载和安装',source:'hacher 更新',time:appUpdateStatus.releaseDate||new Date().toISOString(),processed:false,important:true,priority:110,ref:{...appUpdateStatus}})}
+  const accountItems=mailStatus.configured?inboxItems.filter(item=>item.account===mailStatus.email):[];
+  accountItems.forEach(item=>{const age=now-messageTimestamp(item.receivedAt);const subject=item.subject||'';const address=item.from?.[0]?.address||'';const lowPriority=lowPriorityMailPattern.test(subject);const keyword=!lowPriority&&importantMailPattern.test(subject);const freshPersonal=item.unread&&!lowPriority&&!automatedSenderPattern.test(address)&&age>=0&&age<36*60*60*1000;rows.push({id:String(item.id),type:'mail',title:subject||'（无主题）',summary:item.sender||address||'未知发件人',source:'QQ 邮箱',time:item.receivedAt,processed:Boolean(item.processedAt),important:!item.processedAt&&(keyword||freshPersonal),priority:keyword?85:freshPersonal?65:lowPriority?5:20,unread:Boolean(item.unread),ref:item})});
+  projects.forEach(project=>{ensureProjectSchema(project);project.issues.filter(issue=>issue.status!=='resolved').forEach(issue=>{const critical=['high','critical'].includes(issue.severity);rows.push({id:`issue:${project.id}:${issue.id}`,type:'project',kind:'issue',title:issue.title||'项目问题',summary:`${project.name} · ${issue.notes||'尚未补充说明'}`,source:project.name,time:issue.createdAt||project.updatedAt,processed:false,important:critical,priority:critical?95:55,project,ref:issue})});project.milestones.filter(item=>item.status!=='done'&&item.dueDate).forEach(item=>{const days=Math.ceil((new Date(`${item.dueDate}T23:59:59`).getTime()-now)/86400000);const important=days<=3;rows.push({id:`milestone:${project.id}:${item.id}`,type:'project',kind:'milestone',title:item.title||'项目里程碑',summary:`${project.name} · ${days<0?`已逾期 ${Math.abs(days)} 天`:days===0?'今天截止':`${days} 天后截止`}`,source:project.name,time:item.dueDate,processed:false,important,priority:days<0?100:important?80:35,project,ref:item})})});
+  inventory.filter(part=>Number(part.qty)<=2||part.needsReview).forEach((part,index)=>{const empty=Number(part.qty)<=0;rows.push({id:String(part.id||`part-${index}`),type:'inventory',title:part.needsReview?`${part.name} 等待核对`:`${part.name} 库存${empty?'已用完':'偏低'}`,summary:`${part.spec||'规格待补充'} · 当前 ${Number(part.qty)||0} · ${part.location||'未分配位置'}`,source:'元器件仓库',time:part.updatedAt||part.createdAt,processed:false,important:empty||part.needsReview,priority:empty?90:part.needsReview?75:50,ref:part})});
+  aiTasks.filter(task=>task.status!=='canceled').slice(0,40).forEach(task=>{const actions=Array.isArray(task.result?.suggestedActions)?task.result.suggestedActions:[];const waiting=task.status==='completed'&&actions.length&&!task.actionsAppliedAt;const active=['queued','running'].includes(task.status);const failed=task.status==='failed';const recent=now-messageTimestamp(task.completedAt||task.updatedAt||task.createdAt)<7*86400000;rows.push({id:String(task.id),type:'ai',title:task.title||'助手任务',summary:failed?(task.error||'任务执行失败'):active?(task.step||'正在处理'):task.result?.summary||task.step||'任务已经完成',source:'hacher 助手',time:task.completedAt||task.updatedAt||task.createdAt,processed:Boolean(task.originDismissedAt||task.actionsAppliedAt),important:!task.originDismissedAt&&(active||failed||waiting)&&recent,priority:failed?92:waiting?88:active?70:25,ref:task})});
+  return rows.sort((a,b)=>(b.priority-a.priority)||(messageTimestamp(b.time)-messageTimestamp(a.time)));
+}
+function messageRow(item){const meta=messageTypeMeta[item.type];return `<article class="message-row ${item.processed?'processed':''} ${item.important?'important':''}" data-message-open data-message-type="${h(item.type)}" data-message-id="${h(item.id)}"><span class="message-type-icon ${h(item.type)}">${meta.icon}</span><div class="message-row-copy"><div><b>${h(item.title)}</b>${item.important?'<em>重要</em>':''}</div><small>${h(item.summary)}</small></div><span class="message-source">${h(meta.label)}</span><time>${h(inboxDate(item.time))}</time>${item.type==='mail'?`<button class="message-process" data-mail-process="${h(item.id)}">${item.processed?'恢复':'处理'}</button>`:'<i>›</i>'}</article>`}
 function renderInbox(){
-  const status=$('#inboxStatus');const list=$('#inboxList');if(!status||!list)return;
-  const accountItems=mailStatus.configured?inboxItems.filter(item=>item.account===mailStatus.email):[];const unread=accountItems.filter(item=>item.unread).length;const pending=accountItems.filter(item=>!item.processedAt).length;
-  const visibleItems=accountItems.filter(item=>inboxFilter==='all'||(inboxFilter==='processed'?Boolean(item.processedAt):!item.processedAt));
-  setCountBadge('inboxBadge',pending);$('#inboxCount').textContent=`${visibleItems.length} 封`;
-  $$('.inbox-tabs [data-inbox-filter]').forEach(button=>button.classList.toggle('active',button.dataset.inboxFilter===inboxFilter));
-  status.innerHTML=`<article><span class="${mailStatus.configured?'connected':''}">${mailStatus.configured?'✓':'○'}</span><div><small>邮箱连接</small><b>${mailStatus.configured?h(mailStatus.email):'尚未连接'}</b></div></article><article><span>↻</span><div><small>${mailStatus.autoSync?'自动同步':'手动同步'}</small><b>${mailStatus.lastSyncedAt?h(inboxDate(mailStatus.lastSyncedAt)):'尚未同步'}${mailStatus.autoSync?` · ${Number(mailStatus.syncIntervalMinutes)||5} 分钟`:''}</b></div></article><article><span>●</span><div><small>待处理 / QQ 未读</small><b>${pending} / ${unread} 封</b></div></article>`;
-  const syncButton=$('#mailSyncButton');if(syncButton){syncButton.disabled=mailSyncing||!mailStatus.configured;syncButton.textContent=mailSyncing?'同步中…':`↻ 同步 ${Number(mailStatus.syncLimit)||50} 封`}
-  if(!mailStatus.configured){list.innerHTML='<div class="inbox-empty"><span>⌑</span><b>先连接你的 QQ 邮箱</b><small>hacher 只读取最近邮件的发件人、主题、时间和未读状态，不读取正文，也不会改变邮箱内容。</small><button data-action="mail-settings">连接 QQ 邮箱</button></div>';return}
-  if(!accountItems.length){list.innerHTML=`<div class="inbox-empty"><span>↻</span><b>还没有同步邮件</b><small>点击“同步邮件”，从 QQ 邮箱只读获取最近 ${Number(mailStatus.syncLimit)||50} 封邮件。</small><button data-action="mail-sync">开始第一次同步</button></div>`;return}
-  if(!visibleItems.length){list.innerHTML=`<div class="inbox-empty compact"><span>✓</span><b>${inboxFilter==='pending'?'待处理邮件已经清空':'这里还没有邮件'}</b><small>${inboxFilter==='pending'?'已处理的邮件可以在“已处理”中找到。':'切换其他分类查看邮件。'}</small></div>`;renderDashboardInbox();return}
-  list.innerHTML=`<div class="inbox-list">${visibleItems.map(item=>{const address=item.from?.[0]?.address||'';return `<article class="inbox-row ${item.unread?'unread':''} ${item.processedAt?'processed':''}" data-mail-open="${h(item.id)}"><span class="inbox-unread-dot"></span><div class="inbox-sender"><b>${h(item.sender||'未知发件人')}</b><small>${h(address)}</small></div><div class="inbox-subject"><b>${h(item.subject||'（无主题）')}</b><small>${item.processedAt?'已处理 · ':''}点击按需读取正文</small></div><time>${h(inboxDate(item.receivedAt))}</time><button class="inbox-process-btn" data-mail-process="${h(item.id)}">${item.processedAt?'移回待处理':'标记已处理'}</button></article>`}).join('')}</div>`;
+  const status=$('#inboxStatus');const list=$('#inboxList');if(!status||!list)return;const messages=buildMessageItems();const visible=inboxFilter==='important'?messages.filter(item=>item.important&&!item.processed):messages.filter(item=>item.type===inboxFilter);
+  $$('#messageTabs [data-inbox-filter]').forEach(button=>button.classList.toggle('active',button.dataset.inboxFilter===inboxFilter));
+  ['important','mail','project','inventory','ai'].forEach(type=>{const el=$(`[data-message-count="${type}"]`);if(el)el.textContent=type==='important'?messages.filter(item=>item.important&&!item.processed).length:messages.filter(item=>item.type===type).length});
+  status.innerHTML=mailStatus.configured?`<span class="connected">✓</span><b>${h(mailStatus.email)}</b><small>${mailStatus.autoSync?`每 ${Number(mailStatus.syncIntervalMinutes)||5} 分钟自动同步`:'手动同步'} · ${mailStatus.lastSyncedAt?`上次 ${h(inboxDate(mailStatus.lastSyncedAt))}`:'尚未同步'}</small>`:'<span>○</span><b>QQ 邮箱尚未连接</b><small>项目、库存和 AI 消息仍会正常汇总</small>';
+  const syncButton=$('#mailSyncButton');if(syncButton){syncButton.disabled=mailSyncing||!mailStatus.configured;syncButton.textContent=mailSyncing?'同步中…':'↻ 同步邮件'}
+  if(!visible.length){const copy=inboxFilter==='important'?'目前没有需要立即处理的事项。':inboxFilter==='mail'&&!mailStatus.configured?'连接 QQ 邮箱后即可在这里查看全部邮件。':'这个分类目前没有消息。';list.innerHTML=`<div class="message-empty"><span>✓</span><b>${inboxFilter==='important'?'一切正常':'暂无消息'}</b><small>${copy}</small>${inboxFilter==='mail'&&!mailStatus.configured?'<button data-action="mail-settings">连接 QQ 邮箱</button>':''}</div>`}else list.innerHTML=`<div class="message-list">${visible.map(messageRow).join('')}</div>`;
   renderDashboardInbox();updateNotificationIndicator();
 }
 
 function renderDashboardInbox(){
-  const card=$('#dashboardInbox');if(!card)return;const accountItems=mailStatus.configured?inboxItems.filter(item=>item.account===mailStatus.email):[];const pending=accountItems.filter(item=>!item.processedAt);const recent=pending.slice(0,3);
-  if(!mailStatus.configured){card.innerHTML='<div class="card-title"><div><p class="label">AI 收件箱</p><h2>尚未连接邮箱</h2></div><button class="text-btn" data-view-link="inbox">连接 QQ 邮箱 →</button></div><p class="dashboard-inbox-empty">连接后，这里只显示需要你处理的邮件摘要。</p>';return}
-  card.innerHTML=`<div class="card-title"><div><p class="label">AI 收件箱</p><h2>${pending.length?`${pending.length} 封待处理`:'收件箱已清空'}</h2></div><button class="text-btn" data-view-link="inbox">进入收件箱 →</button></div>${recent.length?`<div class="dashboard-mail-list">${recent.map(item=>`<button data-mail-open="${h(item.id)}"><span><b>${h(item.subject||'（无主题）')}</b><small>${h(item.sender||'未知发件人')}</small></span><time>${h(inboxDate(item.receivedAt))}</time></button>`).join('')}</div>`:'<p class="dashboard-inbox-empty">目前没有需要处理的邮件。</p>'}`;
+  const card=$('#dashboardInbox');if(!card)return;const important=buildMessageItems().filter(item=>item.important&&!item.processed);const visible=important.slice(0,3);
+  card.innerHTML=`<div class="card-title"><div><p class="label">重要消息</p><h2>${important.length?`${important.length} 条待处理`:'目前一切正常'}</h2></div><button class="text-btn" data-view-link="inbox">查看全部 →</button></div>${visible.length?`<div class="dashboard-message-list">${visible.map(item=>`<button data-message-open data-message-type="${h(item.type)}" data-message-id="${h(item.id)}"><span class="message-mini-icon ${h(item.type)}">${messageTypeMeta[item.type].icon}</span><span><b>${h(item.title)}</b><small>${h(messageTypeMeta[item.type].label)} · ${h(item.summary)}</small></span><time>${h(inboxDate(item.time))}</time></button>`).join('')}</div>`:'<p class="dashboard-inbox-empty">没有需要你立即处理的邮件、项目问题、库存异常、版本更新或助手消息。</p>'}`;
 }
 
 async function loadMailStatus(){
@@ -250,13 +259,24 @@ async function clearMailSettings(){
 
 async function openMailDetail(itemId){
   const item=inboxItems.find(value=>value.id===itemId);if(!item)return;
-  showModal(`<div class="mail-detail-loading"><span>⌑</span><h2>${h(item.subject||'（无主题）')}</h2><p>正在从 QQ 邮箱按需读取正文…</p></div>` ,true);
-  try{const result=await window.orbito?.getMailDetail(itemId);if(!result?.ok){showModal(`<div class="modal-icon">!</div><h2>无法打开邮件</h2><p>${h(result?.error||'读取正文失败')}</p><div class="modal-actions"><button class="confirm" data-action="close-modal">关闭</button></div>`);return}const detail=result.detail;const attachments=detail.attachments?.length?`<div class="mail-attachments"><b>附件（仅显示信息）</b>${detail.attachments.map(file=>`<div><span>▤</span><p><b>${h(file.name)}</b><small>${h(file.contentType)} · ${h(formatFileSize(file.size))}</small></p></div>`).join('')}</div>`:'';const privacyNotice=detail.blockedExternalImages||detail.inlineImagesOmitted?`<div class="mail-content-notice">为保护隐私，已隐藏 ${Number(detail.blockedExternalImages)||0} 张外部图片${detail.inlineImagesOmitted?'，并省略体积过大的内嵌图片':''}。</div>`:'';const body=detail.html?`<div class="mail-detail-body mail-rich-content">${detail.html}</div>`:`<div class="mail-detail-body mail-plain-content">${h(detail.text).replace(/\n/g,'<br>')}</div>`;showModal(`<div class="mail-detail-head"><p>${h(detail.from)}</p><h2>${h(detail.subject)}</h2><small>${h(detail.date?new Date(detail.date).toLocaleString('zh-CN'):'时间未知')}${detail.to?` · 收件人 ${h(detail.to)}`:''}</small></div>${privacyNotice}${body}${attachments}<div class="modal-actions"><button class="cancel" data-action="close-modal">关闭</button><button class="confirm" data-mail-process="${h(item.id)}">${item.processedAt?'移回待处理':'标记已处理'}</button></div>`,true)}
-  catch(error){showToast('读取邮件失败：'+(error.message||error))}
+  showMessageDrawer(`<div class="mail-detail-loading"><span>⌑</span><h2>${h(item.subject||'（无主题）')}</h2><p>正在从 QQ 邮箱按需读取正文…</p></div>`);
+  try{const result=await window.orbito?.getMailDetail(itemId);if(!result?.ok){showMessageDrawer(`<div class="message-detail-error"><span>!</span><h2>无法打开邮件</h2><p>${h(result?.error||'读取正文失败')}</p></div>`);return}const detail=result.detail;const attachments=detail.attachments?.length?`<div class="mail-attachments"><b>附件</b>${detail.attachments.map(file=>`<div><span>▤</span><p><b>${h(file.name)}</b><small>${h(file.contentType)} · ${h(formatFileSize(file.size))}</small></p></div>`).join('')}</div>`:'';const imageNotice=detail.externalImageCount||detail.inlineImagesOmitted?`<div class="mail-content-notice">${detail.externalImageCount?`已显示 ${Number(detail.externalImageCount)||0} 张网络图片；这可能会触发发件方的阅读统计。`:''}${detail.inlineImagesOmitted?' 为控制内存占用，体积过大的内嵌图片未加载。':''}</div>`:'';const body=detail.html?`<div class="mail-detail-body mail-rich-content">${detail.html}</div>`:`<div class="mail-detail-body mail-plain-content">${h(detail.text).replace(/\n/g,'<br>')}</div>`;showMessageDrawer(`<div class="message-detail-label">邮件 · QQ 邮箱</div><div class="mail-detail-head"><p>${h(detail.from)}</p><h2>${h(detail.subject)}</h2><small>${h(detail.date?new Date(detail.date).toLocaleString('zh-CN'):'时间未知')}${detail.to?` · 收件人 ${h(detail.to)}`:''}</small></div>${imageNotice}${body}${attachments}<div class="message-drawer-actions"><button class="quiet" data-action="close-message-drawer">关闭</button><button data-mail-process="${h(item.id)}">${item.processedAt?'移回待处理':'标记已处理'}</button></div>`)}
+  catch(error){showMessageDrawer(`<div class="message-detail-error"><span>!</span><h2>读取邮件失败</h2><p>${h(error.message||error)}</p></div>`)}
 }
 
 async function toggleMailProcessed(itemId){
-  const item=inboxItems.find(value=>value.id===itemId);if(!item)return;item.processedAt=item.processedAt?null:new Date().toISOString();await saveState(['inboxItems']);renderInbox();renderDashboardInbox();showToast(item.processedAt?'已移入“已处理”':'已移回待处理');if($('#modalWrap').classList.contains('show'))closeModal();
+  const item=inboxItems.find(value=>value.id===itemId);if(!item)return;item.processedAt=item.processedAt?null:new Date().toISOString();await saveState(['inboxItems']);renderInbox();renderDashboardInbox();showToast(item.processedAt?'已标记为已处理':'已恢复为待处理');closeMessageDrawer();
+}
+
+function showMessageDrawer(html){$('#messageDrawerContent').innerHTML=html;$('#messageDrawer').classList.add('open');$('#messageDrawerBackdrop').classList.add('show')}
+function closeMessageDrawer(){$('#messageDrawer').classList.remove('open');$('#messageDrawerBackdrop').classList.remove('show')}
+function openMessageDetail(type,id){
+  if(type==='mail'){openMailDetail(id);return}const item=buildMessageItems().find(row=>row.type===type&&String(row.id)===String(id));if(!item)return;const meta=messageTypeMeta[type];let detail='';let actions='';
+  if(type==='project'){const project=item.project;detail=`<div class="message-detail-card"><b>${item.kind==='issue'?'项目问题':'项目里程碑'}</b><p>${h(item.ref?.notes||item.summary)}</p><dl><dt>关联项目</dt><dd>${h(project?.name||'未知项目')}</dd>${item.kind==='issue'?`<dt>严重程度</dt><dd>${h(item.ref?.severity||'中')}</dd>`:`<dt>计划日期</dt><dd>${h(item.ref?.dueDate||'未设置')}</dd>`}</dl></div>`;actions=`<button class="quiet" data-action="close-message-drawer">关闭</button><button data-message-project="${h(project?.id)}" data-message-project-tab="governance">打开项目</button>`}
+  if(type==='inventory'){detail=`<div class="message-detail-card"><b>库存状态</b><p>${h(item.summary)}</p><dl><dt>元器件</dt><dd>${h(item.ref?.name||'')}</dd><dt>当前数量</dt><dd>${Number(item.ref?.qty)||0}</dd><dt>存放位置</dt><dd>${h(item.ref?.location||'未分配')}</dd></dl></div>`;actions='<button class="quiet" data-action="close-message-drawer">关闭</button><button data-message-view="inventory">打开元件仓库</button>'}
+  if(type==='ai'){detail=`<div class="message-detail-card"><b>${h(aiTaskStatusLabels[item.ref?.status]||'助手消息')}</b><p>${h(item.summary)}</p>${item.ref?.result?.answer?`<div class="message-ai-answer">${h(item.ref.result.answer).replace(/\n/g,'<br>')}</div>`:''}</div>`;actions=`<button class="quiet" data-action="close-message-drawer">关闭</button><button data-message-ai-task="${h(item.ref?.id)}">打开任务中心</button>`}
+  if(type==='update'){detail=`<div class="message-detail-card"><b>版本与更新</b><p>${h(item.summary)}</p>${item.ref?.releaseNotes?`<div class="message-ai-answer">${h(item.ref.releaseNotes).replace(/\n/g,'<br>')}</div>`:''}<dl><dt>当前版本</dt><dd>v${h(item.ref?.currentVersion||'—')}</dd><dt>最新版本</dt><dd>v${h(item.ref?.availableVersion||'—')}</dd></dl></div>`;actions='<button class="quiet" data-action="close-message-drawer">稍后</button><button data-action="app-update">查看并更新</button>'}
+  showMessageDrawer(`<div class="message-detail-label">${meta.icon} ${h(meta.label)}</div><div class="message-detail-head"><h2>${h(item.title)}</h2><p>${h(item.source)} · ${h(inboxDate(item.time))}</p></div>${detail}<div class="message-drawer-actions">${actions}</div>`);
 }
 
 function localDateKey(value=new Date()){const d=new Date(value);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}
@@ -330,9 +350,9 @@ function renderTopicCards() {
   if (!container) return;
   container.innerHTML = topics.map(t => {
     const count = (t.results || []).length;
-    const dateStr = t.searchedAt ? new Date(t.searchedAt).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' }) : '未搜索';
+    const latestAttemptFailed=t.lastError&&messageTimestamp(t.lastAttemptAt)>messageTimestamp(t.searchedAt);const dateStr=latestAttemptFailed?'刷新失败':t.lastWarning?'部分更新':t.searchedAt ? new Date(t.searchedAt).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' }) : '未搜索';
     const isActive = t.id === activeTopicId;
-    return `<div class="topic-card${isActive ? ' active' : ''}" data-topic-id="${t.id}"><p class="topic-name">${h(t.name)}</p><p class="topic-meta">${count} 条结果 · ${dateStr}</p><button class="topic-delete" data-topic-delete="${t.id}" title="删除主题">×</button></div>`;
+    return `<div class="topic-card${isActive ? ' active' : ''}${latestAttemptFailed?' refresh-failed':''}" data-topic-id="${t.id}"><p class="topic-name">${h(t.name)}</p><p class="topic-meta">${count} 条结果 · ${dateStr}</p><button class="topic-delete" data-topic-delete="${t.id}" title="删除主题">×</button></div>`;
   }).join('');
 }
 
@@ -351,8 +371,9 @@ function renderTopicResults() {
   const arxivResults = (topic.results || []).filter(r => r.source !== 'web');
   const webResults = (topic.results || []).filter(r => r.source === 'web');
   const searchedAt = topic.searchedAt ? new Date(topic.searchedAt).toLocaleString('zh-CN') : '尚未搜索';
+  const latestAttemptFailed=topic.lastError&&messageTimestamp(topic.lastAttemptAt)>messageTimestamp(topic.searchedAt);
 
-  let html = `<div class="topic-result-header"><h2>${h(topic.name)}</h2><small>最后更新：${searchedAt}</small></div>`;
+  let html = `<div class="topic-result-header"><h2>${h(topic.name)}</h2><small>最后成功更新：${searchedAt}</small></div>${latestAttemptFailed?`<div class="topic-refresh-error"><b>最近一次刷新失败</b><span>${h(topic.lastError)}</span><small>尝试时间：${h(new Date(topic.lastAttemptAt).toLocaleString('zh-CN'))}</small></div>`:''}${topic.lastWarning?`<div class="topic-refresh-warning"><b>本次为部分更新</b><span>${h(topic.lastWarning)}</span><small>其他可用来源的结果已正常保存。可在“我的工作区 → 网络与代理”检查连接。</small></div>`:''}`;
 
   if (!topic.results || !topic.results.length) {
     html += '<div class="topic-results-empty"><span>✦</span><b>暂无搜索结果</b><small>点击"全部刷新"为此主题搜索最新内容。</small></div>';
@@ -395,11 +416,13 @@ async function autoBriefing() {
   autoBriefingRunning = true;
   setTopicStatus('searching', `正在搜索 ${pendingTopics.length} 个关注主题…`);
   let succeeded = 0;
+  let warnings = 0;
   const failures = [];
   for (const topic of pendingTopics) {
     try {
-      await window.orbito.generateTopicBriefing(topic.id);
+      const updated = await window.orbito.generateTopicBriefing(topic.id);
       succeeded++;
+      if(updated?.lastWarning)warnings++;
     } catch (err) {
       console.error(`Briefing search failed for "${topic.name}":`, err);
       failures.push(topic.name);
@@ -413,8 +436,8 @@ async function autoBriefing() {
     renderTopicCards();
     renderTopicResults();
     renderDashboardBriefing();
-    setTopicStatus(failures.length?'error':'done', failures.length?`已更新 ${succeeded} 个主题，${failures.length} 个失败，可稍后重试`:`已更新 ${succeeded} 个主题的情报`);
-    setTimeout(() => setTopicStatus('', ''), 3000);
+    setTopicStatus(failures.length?'error':warnings?'warning':'done', failures.length?`已更新 ${succeeded} 个主题，${failures.length} 个失败，可稍后重试`:warnings?`已更新 ${succeeded} 个主题，其中 ${warnings} 个主题有来源暂不可用`:`已更新 ${succeeded} 个主题的情报`);
+    if(!failures.length&&!warnings)setTimeout(() => setTopicStatus('', ''), 3000);
   } catch (err) {
     setTopicStatus('error', `更新情报时出错：${err.message}`);
   } finally {
@@ -435,22 +458,28 @@ async function refreshAllTopics() {
   if (!window.orbito) { showToast('每日情报只在桌面应用中可用'); return; }
   if (!aiConfigured) { showToast('后台智能服务尚未配置，无法执行搜索'); return; }
   if (!topics.length) { showToast('请先添加关注主题'); return; }
+  if (autoBriefingRunning) { showToast('情报正在刷新，请稍候'); return; }
+  autoBriefingRunning=true;const button=$('[data-action="refresh-all-topics"]');if(button)button.disabled=true;
   setTopicStatus('searching', `正在搜索 ${topics.length} 个关注主题…`);
-  for (const topic of topics) {
-    try {
-      await window.orbito.generateTopicBriefing(topic.id);
-    } catch (err) {
-      console.error(`Briefing failed for "${topic.name}":`, err);
+  const startedAt=Date.now()-1000;let succeeded=0;let warnings=0;const failures=[];
+  try{
+    for (const topic of [...topics]) {
+      try {
+        const updated=await window.orbito.generateTopicBriefing(topic.id);
+        if(messageTimestamp(updated?.searchedAt)<startedAt)throw new Error('后台没有返回新的更新时间');
+        succeeded++;
+        if(updated?.lastWarning)warnings++;
+      } catch (err) {
+        console.error(`Briefing failed for "${topic.name}":`, err);
+        failures.push({name:topic.name,error:String(err?.message||err||'未知错误').replace(/^情报生成失败：/,'')});
+      }
     }
-  }
-  const state = await window.orbito.getState();
-  if (Array.isArray(state.topics)) topics = state.topics;
-  if (Array.isArray(state.briefings)) briefings = state.briefings;
-  renderTopicCards();
-  renderTopicResults();
-  renderDashboardBriefing();
-  setTopicStatus('done', `情报已生成`);
-  setTimeout(() => setTopicStatus('', ''), 3000);
+    const state = await window.orbito.getState();
+    if (Array.isArray(state.topics)) topics = state.topics;
+    if (Array.isArray(state.briefings)) briefings = state.briefings;
+    renderTopicCards();renderTopicResults();renderDashboardBriefing();
+    if(failures.length){const first=failures[0];setTopicStatus('error',succeeded?`已更新 ${succeeded} 个主题，${failures.length} 个失败：${first.name}`:`刷新失败：${first.name} · ${first.error}`)}else{setTopicStatus(warnings?'warning':'done',warnings?`已更新 ${succeeded} 个主题，其中 ${warnings} 个主题有来源暂不可用`:`已更新 ${succeeded} 个主题`);if(!warnings)setTimeout(() => setTopicStatus('', ''), 3000)}
+  }catch(error){setTopicStatus('error',`刷新情报时出错：${error.message||error}`)}finally{autoBriefingRunning=false;if(button)button.disabled=false}
 }
 
 async function saveState(domains=null) {
@@ -703,8 +732,10 @@ function notificationsModal(){const open=tasks.filter(t=>!t.done);const low=inve
 
 async function profileModal(){
   try{appUpdateStatus=await window.orbito?.getUpdateStatus()||appUpdateStatus}catch(error){console.error(error)}
+  let networkStatus={mode:'auto',detected:{label:'自动检测'}};try{networkStatus=await window.orbito?.getNetworkSettings()||networkStatus}catch(error){console.error(error)}
   const updateCopy=appUpdateStatus.state==='available'?`发现 v${appUpdateStatus.availableVersion}`:appUpdateStatus.state==='downloaded'?`v${appUpdateStatus.availableVersion} 已下载`:appUpdateStatus.state==='up-to-date'?'当前已是最新版':`当前版本 v${appUpdateStatus.currentVersion||'—'}`;
-  showModal(`<div class="modal-icon">XY</div><h2>我的工作区</h2><p>当前为单人、本地优先模式。账户与多端同步将在后续版本加入。</p><div class="result-box"><p><b>后台智能服务：</b>${aiConfigured?'已配置':'尚未配置'}</p><p><b>数据存储：</b>本机应用数据目录</p><p><b>长期记忆：</b>${memories.length} 条</p><p><b>未完成任务：</b>${tasks.filter(t=>!t.done).length} 项</p></div><div class="workspace-settings"><button type="button" data-action="api-settings"><span>🔑</span><div><b>后台智能服务</b><small>${aiConfigured?'用于截图识别、论文检索与每日情报':'配置后启用后台识别与检索'}</small></div><i>›</i></button><button type="button" data-action="app-update"><span>↻</span><div><b>版本与更新</b><small>${h(updateCopy)}</small></div><i>›</i></button></div><div class="modal-actions"><button class="cancel" data-action="show-data">打开数据位置</button><button class="confirm" data-action="close-modal">完成</button></div>`)
+  const networkCopy=networkStatus.mode==='direct'?'直接连接':networkStatus.mode==='manual'?`手动代理 · ${networkStatus.host}:${networkStatus.port}`:`自动 · ${networkStatus.detected?.label||'按系统网络连接'}`;
+  showModal(`<div class="modal-icon">XY</div><h2>我的工作区</h2><p>当前为单人、本地优先模式。账户与多端同步将在后续版本加入。</p><div class="result-box"><p><b>后台智能服务：</b>${aiConfigured?'已配置':'尚未配置'}</p><p><b>数据存储：</b>本机应用数据目录</p><p><b>长期记忆：</b>${memories.length} 条</p><p><b>未完成任务：</b>${tasks.filter(t=>!t.done).length} 项</p></div><div class="workspace-settings"><button type="button" data-action="api-settings"><span>🔑</span><div><b>后台智能服务</b><small>${aiConfigured?'用于截图识别、论文检索与每日情报':'配置后启用后台识别与检索'}</small></div><i>›</i></button><button type="button" data-action="network-settings"><span>⌁</span><div><b>网络与代理</b><small>${h(networkCopy)}</small></div><i>›</i></button><button type="button" data-action="app-update"><span>↻</span><div><b>版本与更新</b><small>${h(updateCopy)}</small></div><i>›</i></button></div><div class="modal-actions"><button class="cancel" data-action="show-data">打开数据位置</button><button class="confirm" data-action="close-modal">完成</button></div>`)
 }
 
 function formatUpdateBytes(value){const bytes=Math.max(0,Number(value)||0);if(!bytes)return'0 MB';if(bytes<1024*1024)return`${(bytes/1024).toFixed(1)} KB`;return`${(bytes/1024/1024).toFixed(1)} MB`}
@@ -719,7 +750,7 @@ function updatePanelMarkup(status=appUpdateStatus){
   if(state==='error')return`<div class="update-state error"><span>!</span><b>检查更新失败</b><p>${h(status.error||'暂时无法连接更新服务，请稍后重试。')}</p></div><div class="modal-actions"><button class="cancel" data-action="profile">返回</button><button class="confirm" data-action="update-check">重试</button></div>`;
   return`<div class="update-state"><span>↻</span><b>检查 hacher 更新</b><p>当前版本 v${current}。只有在你确认后才会下载和安装。</p></div><div class="modal-actions"><button class="cancel" data-action="profile">返回</button><button class="confirm" data-action="update-check">检查更新</button></div>`
 }
-function renderAppUpdateStatus(status){appUpdateStatus={...appUpdateStatus,...status};const panel=$('#updatePanel');if(panel)panel.innerHTML=updatePanelMarkup(appUpdateStatus)}
+function renderAppUpdateStatus(status){appUpdateStatus={...appUpdateStatus,...status};const panel=$('#updatePanel');if(panel)panel.innerHTML=updatePanelMarkup(appUpdateStatus);renderInbox();renderDashboardInbox();updateNotificationIndicator()}
 async function appUpdateModal(){try{appUpdateStatus=await window.orbito?.getUpdateStatus()||appUpdateStatus}catch(error){appUpdateStatus={...appUpdateStatus,state:'error',error:error.message||String(error)}}showModal(`<div class="modal-icon">↻</div><h2>版本与更新</h2><p>更新由 GitHub Releases 提供。hacher 不会未经确认自动安装。</p><div id="updatePanel">${updatePanelMarkup(appUpdateStatus)}</div>`)}
 async function checkAppUpdate(){renderAppUpdateStatus({state:'checking',error:''});try{const status=await window.orbito?.checkForUpdates();if(status)renderAppUpdateStatus(status)}catch(error){renderAppUpdateStatus({state:'error',error:error.message||String(error)})}}
 async function downloadAppUpdate(){renderAppUpdateStatus({state:'downloading',percent:0,error:''});try{const status=await window.orbito?.downloadUpdate();if(status)renderAppUpdateStatus(status)}catch(error){renderAppUpdateStatus({state:'error',error:error.message||String(error)})}}
@@ -754,6 +785,22 @@ async function clearAPIKey(){
   if(!window.confirm('确定清除本机保存的后台服务 API Key？清除后截图识别和情报检索将不可用。'))return;
   try{const result=await window.orbito.clearAIKey();if(!result.ok){showToast(result.error||'清除失败');return}await refreshAIStatus();showToast('API Key 已从本机清除');apiSettingsModal()}catch(error){showToast('清除失败：'+error.message)}
 }
+
+function networkSettingsDraft(){return{mode:$('#networkMode')?.value||'auto',host:$('#networkHost')?.value.trim()||'127.0.0.1',port:$('#networkPort')?.value.trim()||''}}
+function toggleNetworkManualFields(){const manual=$('#networkMode')?.value==='manual';const fields=$('#networkManualFields');if(fields)fields.hidden=!manual;$('#networkHost')?.toggleAttribute('disabled',!manual);$('#networkPort')?.toggleAttribute('disabled',!manual)}
+function networkTestMarkup(result){
+  if(result?.error)return`<div class="network-test-result error"><b>测试失败</b><span>${h(result.error)}</span></div>`;
+  const item=(label,value)=>`<div class="network-test-item ${value?.ok?'ok':'error'}"><span>${value?.ok?'✓':'!'}</span><div><b>${label}</b><small>${value?.ok?`${value.route==='proxy'?`${value.proxy?.label||'本地代理'} ${value.proxy?.host||''}:${value.proxy?.port||''}`:'直接连接'} · HTTP ${value.status}`:h(value?.error||'无法连接')}</small></div></div>`;
+  return`<div class="network-test-result"><p>${result?.ok?'所有网络来源均可用':result?.partial?'部分来源可用，情报仍可继续更新':'当前没有可用的情报网络来源'}</p>${item('千问服务',result?.dashscope)}${item('arXiv 论文源',result?.arxiv)}</div>`;
+}
+async function networkSettingsModal(){
+  let status={mode:'auto',host:'127.0.0.1',port:'',detected:{type:'direct',label:'自动检测'}};try{status=await window.orbito?.getNetworkSettings()||status}catch(error){console.error(error)}
+  const detected=status.detected?.type==='proxy'?`${status.detected.label} · ${status.detected.host}:${status.detected.port}`:status.detected?.label||'未检测';
+  showModal(`<div class="modal-icon">⌁</div><h2>网络与代理</h2><p>默认自动使用 Windows 系统代理或环境变量。仅当 arXiv 等外部论文源无法连接时，才需要手动配置。</p><div class="api-status ${status.detected?.type==='proxy'?'connected':''}"><span></span><b>${status.mode==='auto'?'自动检测':status.mode==='manual'?'手动代理':'直接连接'}</b><small>${h(detected)}</small></div><div class="form-grid"><div class="form-field full"><label>连接方式</label><select id="networkMode"><option value="auto" ${status.mode==='auto'?'selected':''}>自动检测（推荐）</option><option value="direct" ${status.mode==='direct'?'selected':''}>直接连接</option><option value="manual" ${status.mode==='manual'?'selected':''}>手动本地 HTTP 代理</option></select></div><div class="network-manual-fields full" id="networkManualFields"><div class="form-field"><label>代理地址</label><input id="networkHost" value="${h(status.host||'127.0.0.1')}" placeholder="127.0.0.1" spellcheck="false"></div><div class="form-field"><label>端口</label><input id="networkPort" type="number" min="1" max="65535" value="${h(status.port||'')}" placeholder="例如 7897"></div></div></div><div class="network-note">hacher 不会启动、修改或上传你的代理配置。当前版本仅支持运行在本机的 HTTP 代理。</div><div id="networkTestPanel"></div><div class="modal-actions"><button class="cancel" data-action="profile">返回</button><button class="cancel" data-action="network-test">测试连接</button><button class="confirm" data-action="network-save">保存</button></div>`);
+  toggleNetworkManualFields();
+}
+async function testNetworkSettings(){const button=$('[data-action="network-test"]');if(button){button.disabled=true;button.textContent='测试中…'}const panel=$('#networkTestPanel');if(panel)panel.innerHTML='<div class="network-testing">正在测试千问和 arXiv…</div>';try{const result=await window.orbito?.testNetworkSettings(networkSettingsDraft());if(panel)panel.innerHTML=networkTestMarkup(result)}catch(error){if(panel)panel.innerHTML=networkTestMarkup({error:error.message||String(error)})}finally{if(button){button.disabled=false;button.textContent='测试连接'}}}
+async function saveNetworkSettings(){const button=$('[data-action="network-save"]');if(button){button.disabled=true;button.textContent='保存中…'}try{const result=await window.orbito?.saveNetworkSettings(networkSettingsDraft());if(!result?.ok){showToast(result?.error||'网络设置保存失败');return}showToast('网络设置已保存并立即生效');profileModal()}catch(error){showToast('保存失败：'+(error.message||error))}finally{if(button){button.disabled=false;button.textContent='保存'}}}
 
 function searchModal(){const items=[...tasks.map(t=>`<button data-view-link="today">${h(t.title)} <small>待办</small></button>`),...inventory.map(p=>`<button data-view-link="inventory">${h(p.name)} <small>元件</small></button>`)];showModal(`<div class="modal-icon">⌕</div><h2>全局搜索</h2><p>只搜索已经录入工作台的真实内容。</p><div class="form-field full"><input id="searchInput" placeholder="输入关键词…"></div>${items.length?`<div class="result-box search-results">${items.join('')}</div>`:'<div class="empty-state small"><b>还没有可搜索的数据</b><small>先创建任务、项目或库存记录</small></div>'}<div class="modal-actions"><button class="confirm" data-action="close-modal">关闭</button></div>`);setTimeout(()=>$('#searchInput')?.focus(),100)}
 
@@ -857,6 +904,10 @@ async function simulateAI(text, attachment=null){
 document.addEventListener('click',e=>{
   const inboxFilterButton=e.target.closest('[data-inbox-filter]');if(inboxFilterButton){inboxFilter=inboxFilterButton.dataset.inboxFilter;renderInbox();return}
   const mailProcess=e.target.closest('[data-mail-process]');if(mailProcess){e.stopPropagation();toggleMailProcessed(mailProcess.dataset.mailProcess);return}
+  const messageOpen=e.target.closest('[data-message-open]');if(messageOpen){openMessageDetail(messageOpen.dataset.messageType,messageOpen.dataset.messageId);return}
+  const messageProject=e.target.closest('[data-message-project]');if(messageProject){closeMessageDrawer();openProjectWorkspace(messageProject.dataset.messageProject,messageProject.dataset.messageProjectTab||'overview');return}
+  const messageView=e.target.closest('[data-message-view]');if(messageView){closeMessageDrawer();switchView(messageView.dataset.messageView);return}
+  const messageAITask=e.target.closest('[data-message-ai-task]');if(messageAITask){closeMessageDrawer();viewAITask(messageAITask.dataset.messageAiTask);return}
   const mailOpen=e.target.closest('[data-mail-open]');if(mailOpen){openMailDetail(mailOpen.dataset.mailOpen);return}
   const agentSuggestion=e.target.closest('[data-agent-suggestion]');if(agentSuggestion){$('#agentRequestInput').value=agentSuggestion.dataset.agentSuggestion;$('#agentRequestInput').focus();return}
   const aiPane=e.target.closest('[data-ai-pane]');if(aiPane){setAIPane(aiPane.dataset.aiPane);return}
@@ -909,7 +960,7 @@ document.addEventListener('click',e=>{
     'quick-add':()=>formModal('task'),'add-task':()=>formModal('task'),'add-event':()=>eventModal(),'save-event':saveEvent,'add-project':()=>projectModal(),'add-diy-project':()=>projectModal('diy'),'save-project':saveProject,'add-part':()=>formModal('part'),'add-memory':memoryModal,'project-add-task':()=>formModal('task',activeProjectId),'project-add-event':()=>eventModal(null,activeProjectId),'project-link-tasks':()=>projectItemsModal('tasks'),'project-link-events':()=>projectItemsModal('events'),'project-save-items':saveProjectItems,'project-link-papers':projectPapersModal,'project-save-papers':saveProjectPapers,'project-add-bom':projectBomModal,'project-save-bom':saveProjectBom,'project-add-milestone':milestoneModal,'project-save-milestone':saveMilestone,'project-add-issue':issueModal,'project-save-issue':saveIssue,'project-add-decision':decisionModal,'project-save-decision':saveDecision,
     'paper-search':paperSearchModal,'execute-paper-search':executePaperSearch,
     'inventory-import':()=>$('#inventoryFileInput').click(),'save-part-edit':savePartEdit,'paper-import':importPapers,
-    'search':searchModal,'notifications':notificationsModal,'profile':profileModal,'api-settings':apiSettingsModal,'save-api-settings':saveAPISettings,'clear-api-key':clearAPIKey,'mail-settings':mailSettingsModal,'mail-save-test':saveAndTestMail,'mail-sync':syncMailInbox,'mail-clear':clearMailSettings,'app-update':appUpdateModal,'update-check':checkAppUpdate,'update-download':downloadAppUpdate,'update-install':installAppUpdate,'read-notifications':()=>{const dot=document.querySelector('#notificationDot');if(dot)dot.hidden=true;closeModal();showToast('通知已全部标记为已读')},
+    'search':searchModal,'message-center':()=>switchView('inbox'),'close-message-drawer':closeMessageDrawer,'profile':profileModal,'api-settings':apiSettingsModal,'save-api-settings':saveAPISettings,'clear-api-key':clearAPIKey,'network-settings':networkSettingsModal,'network-test':testNetworkSettings,'network-save':saveNetworkSettings,'mail-settings':mailSettingsModal,'mail-save-test':saveAndTestMail,'mail-sync':syncMailInbox,'mail-clear':clearMailSettings,'app-update':()=>{closeMessageDrawer();appUpdateModal()},'update-check':checkAppUpdate,'update-download':downloadAppUpdate,'update-install':installAppUpdate,
     'add-purchase':()=>showToast('已加入待确认采购清单'),'paper-save':()=>showToast('已加入待读列表'),'create-insight':()=>showToast('已保存为产品洞察'),
     'english-session':englishPlanModal,'save-english-plan':createEnglishPlan,'add-topic':addTopicModal,'refresh-all-topics':refreshAllTopics,'brief-read':()=>showToast('后续版本可调用语音模型朗读'),'project-add-log':projectLogModal,'project-save-log':saveProjectLog,'project-import-files':()=>attachProjectFiles('import'),'project-link-files':()=>attachProjectFiles('link'),'show-data':()=>window.orbito?.showDataFolder(),
     'terminal-restart':()=>initTerminal(true),'terminal-claude':openClaude,'terminal-context':showTerminalContext,'terminal-clear':()=>{xterm?.clear();xterm?.focus()},'terminal-stop':async()=>{await window.orbito?.terminalKill();terminalStarted=false;setTerminalStatus(false,'已结束')}
@@ -917,6 +968,7 @@ document.addEventListener('click',e=>{
 });
 
 document.addEventListener('change',e=>{
+  if(e.target.id==='networkMode'){toggleNetworkManualFields();return}
   if(e.target.id==='projectFileCategory'&&activeProjectId!=null){
     const value=e.target.value;
     if(Object.hasOwn(projectFileCategoryLabels,value))projectFileCategorySelections.set(String(activeProjectId),value);
@@ -924,9 +976,10 @@ document.addEventListener('change',e=>{
 });
 
 $('#overlay').addEventListener('click',()=>closeModal());
+$('#messageDrawerBackdrop').addEventListener('click',()=>closeMessageDrawer());
 $('#mobileMenu').addEventListener('click',()=>document.querySelector('.sidebar').classList.toggle('open'));
 $('#inventoryFileInput').addEventListener('change',e=>{const files=[...e.target.files];e.target.value='';if(files.length)processInventoryScreenshots(files)});
-document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();showToast('输入关键词即可搜索整个工作台')}if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='n'){e.preventDefault();formModal('task')}});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeMessageDrawer();closeModal()}if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();showToast('输入关键词即可搜索整个工作台')}if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='n'){e.preventDefault();formModal('task')}});
 
 async function initialize(){
   if(window.orbito){

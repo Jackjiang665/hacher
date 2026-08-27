@@ -1,8 +1,11 @@
-const { app, BrowserWindow, ipcMain, shell, dialog, Tray, Menu, safeStorage, powerMonitor } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, Tray, Menu, safeStorage, powerMonitor, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const net = require('net');
+const http = require('http');
+const https = require('https');
+const tls = require('tls');
 const { execFileSync, spawn } = require('child_process');
 const { autoUpdater } = require('electron-updater');
 const { ImapFlow } = require('imapflow');
@@ -26,6 +29,7 @@ let stateWatcherStarted = false;
 let lastRendererWriteAt = 0;
 let updaterInitialized = false;
 let updateOperation = null;
+let updateCheckTimer = null;
 let mailSyncOperation = null;
 let mailSyncTimer = null;
 const mailDetailCache = new Map();
@@ -39,6 +43,7 @@ let updateStatus = {
   transferred: 0,
   total: 0,
   bytesPerSecond: 0,
+  releaseDate: '',
   error: '',
 };
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
@@ -63,6 +68,36 @@ function getProjectRoot() {
 }
 
 const proxyEnvironmentNames = ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy'];
+const defaultNetworkConfig = { mode: 'auto', host: '127.0.0.1', port: '' };
+
+function getNetworkConfigFile() {
+  return path.join(app.getPath('userData'), 'network-config.json');
+}
+
+function normalizeNetworkConfig(value = {}) {
+  const mode = ['auto', 'direct', 'manual'].includes(value.mode) ? value.mode : 'auto';
+  const host = String(value.host || '127.0.0.1').trim().toLowerCase().replace(/^\[|\]$/g, '');
+  const portNumber = Number(value.port);
+  return {
+    mode,
+    host: ['127.0.0.1', 'localhost', '::1'].includes(host) ? host : '127.0.0.1',
+    port: Number.isInteger(portNumber) && portNumber > 0 && portNumber <= 65535 ? String(portNumber) : '',
+  };
+}
+
+function readNetworkConfig() {
+  try { return normalizeNetworkConfig(JSON.parse(fs.readFileSync(getNetworkConfigFile(), 'utf8'))); }
+  catch { return { ...defaultNetworkConfig }; }
+}
+
+function writeNetworkConfig(value) {
+  const requestedHost = String(value?.host || '127.0.0.1').trim().toLowerCase().replace(/^\[|\]$/g, '');
+  if (value?.mode === 'manual' && !['127.0.0.1', 'localhost', '::1'].includes(requestedHost)) throw new Error('当前版本只支持本机 HTTP 代理（127.0.0.1 或 localhost）');
+  const config = normalizeNetworkConfig(value);
+  if (config.mode === 'manual' && !config.port) throw new Error('手动代理需要填写 1–65535 之间的端口');
+  fs.writeFileSync(getNetworkConfigFile(), JSON.stringify(config, null, 2), 'utf8');
+  return config;
+}
 
 function getLocalProxyEndpoint(value) {
   try {
@@ -94,6 +129,244 @@ function canConnectToLocalProxy({ hostname, port }, timeoutMs = 500) {
     socket.once('timeout', () => finish(false));
     socket.once('error', () => finish(false));
   });
+}
+
+function proxyEndpointFromRule(rule) {
+  const match = String(rule || '').trim().match(/^(?:PROXY|HTTPS?)\s+([^:;\s]+):(\d+)$/i);
+  return match ? getLocalProxyEndpoint(`http://${match[1]}:${match[2]}`) : null;
+}
+
+async function proxyCandidatesFor(url, config = readNetworkConfig()) {
+  const normalized = normalizeNetworkConfig(config);
+  if (normalized.mode === 'direct') return [];
+  if (normalized.mode === 'manual') return [{ hostname: normalized.host, port: Number(normalized.port), source: 'manual', label: '手动代理' }];
+  const candidates = [];
+  if (app.isReady()) {
+    try {
+      const rules = await session.defaultSession.resolveProxy(url);
+      for (const rule of String(rules || '').split(';')) {
+        const endpoint = proxyEndpointFromRule(rule);
+        if (endpoint) candidates.push({ ...endpoint, source: 'system', label: 'Windows 系统代理' });
+      }
+    } catch (error) {
+      console.error('System proxy detection failed:', error.message);
+    }
+  }
+  for (const name of proxyEnvironmentNames) {
+    const endpoint = getLocalProxyEndpoint(process.env[name]);
+    if (endpoint) candidates.push({ ...endpoint, source: 'environment', label: `${name} 环境变量` });
+  }
+  const seen = new Set();
+  return candidates.filter(candidate => {
+    const id = `${candidate.hostname}:${candidate.port}`;
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+}
+
+// Establish a CONNECT tunnel to host:port through a local HTTP proxy.
+function openConnectTunnel(proxy, host, port, timeout) {
+  return new Promise((resolve, reject) => {
+    const req = http.request({
+      host: proxy.hostname,
+      port: proxy.port,
+      method: 'CONNECT',
+      path: `${host}:${port}`,
+      headers: { Host: `${host}:${port}` },
+      agent: false,
+      timeout,
+    });
+    req.on('connect', (res, socket) => {
+      if (res.statusCode !== 200) {
+        socket.destroy();
+        reject(new Error(`代理隧道返回 ${res.statusCode}`));
+        return;
+      }
+      resolve(socket);
+    });
+    req.on('timeout', () => { req.destroy(); reject(new Error('代理连接超时')); });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+// Upgrade a raw CONNECT socket to TLS.
+function upgradeTls(socket, servername, timeout) {
+  return new Promise((resolve, reject) => {
+    const secured = tls.connect({ socket, servername });
+    secured.setTimeout(timeout, () => { secured.destroy(); reject(new Error('TLS 握手超时')); });
+    secured.once('secureConnect', () => resolve(secured));
+    secured.once('error', reject);
+  });
+}
+
+function parseHttpHead(buffer) {
+  const headEnd = buffer.indexOf('\r\n\r\n');
+  if (headEnd < 0) return null;
+  const lines = buffer.slice(0, headEnd).toString('latin1').split('\r\n');
+  const m = (lines[0] || '').match(/^HTTP\/1\.[01]\s+(\d{3})\s*(.*)$/i);
+  if (!m) return null;
+  const headers = {};
+  for (let i = 1; i < lines.length; i++) {
+    const idx = lines[i].indexOf(':');
+    if (idx > 0) headers[lines[i].slice(0, idx).trim().toLowerCase()] = lines[i].slice(idx + 1).trim();
+  }
+  return { status: Number(m[1]), headers, bodyStart: headEnd + 4 };
+}
+
+// Read a single HTTP/1.1 response, handling content-length, chunked or close-delimited bodies.
+function readHttpResponse(socket, timeout) {
+  return new Promise((resolve, reject) => {
+    let buffer = Buffer.alloc(0);
+    let settled = false;
+    const finish = (status, headers, bodyStart) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.removeListener('data', onData);
+      socket.removeListener('end', onEnd);
+      socket.removeListener('error', onError);
+      resolve({ status, headers, body: buffer.slice(bodyStart).toString('utf8') });
+    };
+    const fail = error => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.removeListener('data', onData);
+      socket.removeListener('end', onEnd);
+      socket.removeListener('error', onError);
+      reject(error);
+    };
+    const completeAt = head => {
+      const { headers, bodyStart } = head;
+      if (headers['transfer-encoding'] && /chunked/i.test(headers['transfer-encoding'])) {
+        let pos = bodyStart;
+        while (pos < buffer.length) {
+          const nl = buffer.indexOf('\r\n', pos);
+          if (nl < 0) return null;
+          const size = parseInt(buffer.slice(pos, nl).toString('latin1').split(';')[0].trim() || '0', 16);
+          if (Number.isNaN(size)) return null;
+          if (size === 0) return { headers, bodyStart };
+          if (nl + 2 + size + 2 > buffer.length) return null;
+          pos = nl + 2 + size + 2;
+        }
+        return null;
+      }
+      if (headers['content-length']) {
+        const len = Number(headers['content-length']);
+        return buffer.length >= bodyStart + len ? { headers, bodyStart } : null;
+      }
+      if (/close/i.test(headers['connection'] || '')) return { headers, bodyStart };
+      return null;
+    };
+    const onData = chunk => {
+      buffer = Buffer.concat([buffer, chunk]);
+      const head = parseHttpHead(buffer);
+      if (!head) return;
+      const done = completeAt(head);
+      if (done) finish(head.status, done.headers, done.bodyStart);
+    };
+    const onEnd = () => {
+      const head = parseHttpHead(buffer);
+      if (head && /close/i.test(head.headers['connection'] || '')) finish(head.status, head.headers, head.bodyStart);
+      else fail(new Error('响应不完整'));
+    };
+    const onError = error => fail(error);
+    const timer = setTimeout(() => { socket.destroy(); fail(new Error('读取响应超时')); }, timeout);
+    socket.on('data', onData);
+    socket.on('end', onEnd);
+    socket.on('error', onError);
+  });
+}
+
+// GET a URL over HTTPS/HTTP, routing through a reachable local proxy when available.
+async function httpGetWithProxy(urlStr, { headers = {}, timeout = 20000, networkConfig } = {}) {
+  const url = new URL(urlStr);
+  const isHttps = url.protocol === 'https:';
+  const port = Number(url.port) || (isHttps ? 443 : 80);
+  const target = { host: url.hostname, port, path: url.pathname + url.search };
+  const config = normalizeNetworkConfig(networkConfig || readNetworkConfig());
+  const candidates = await proxyCandidatesFor(urlStr, config);
+  let proxyError = null;
+
+  for (const proxy of candidates) {
+    if (!(await canConnectToLocalProxy(proxy))) {
+      proxyError = new Error(`${proxy.label} ${proxy.hostname}:${proxy.port} 未运行`);
+      continue;
+    }
+    try {
+      const rawSocket = await openConnectTunnel(proxy, target.host, target.port, timeout);
+      const secured = isHttps ? await upgradeTls(rawSocket, target.host, timeout) : rawSocket;
+      const lines = [`GET ${target.path} HTTP/1.1`, `Host: ${target.host}:${target.port}`];
+      for (const key of Object.keys(headers)) lines.push(`${key}: ${headers[key]}`);
+      lines.push('Connection: close');
+      secured.write(`${lines.join('\r\n')}\r\n\r\n`);
+      const response = await readHttpResponse(secured, timeout);
+      secured.destroy();
+      return { ...response, route: 'proxy', proxy: { host: proxy.hostname, port: proxy.port, source: proxy.source, label: proxy.label } };
+    } catch (error) {
+      proxyError = error;
+      console.error(`${proxy.label} request failed:`, error.message);
+    }
+  }
+
+  if (config.mode === 'manual') throw proxyError || new Error('手动代理不可用');
+
+  return new Promise((resolve, reject) => {
+    const mod = isHttps ? https : http;
+    const req = mod.request({ host: target.host, port: target.port, path: target.path, method: 'GET', headers, timeout }, res => {
+      const chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks).toString('utf8'), route: 'direct', proxy: null }));
+    });
+    req.on('timeout', () => { req.destroy(); reject(new Error('请求超时')); });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+async function networkSettingsSnapshot() {
+  const config = readNetworkConfig();
+  if (config.mode === 'direct') return { ...config, detected: { type: 'direct', label: '直接连接' } };
+  const candidates = await proxyCandidatesFor('https://export.arxiv.org', config);
+  for (const candidate of candidates) {
+    if (await canConnectToLocalProxy(candidate, 700)) {
+      return { ...config, detected: { type: 'proxy', label: candidate.label, host: candidate.hostname, port: candidate.port } };
+    }
+  }
+  return { ...config, detected: { type: 'direct', label: config.mode === 'manual' ? '手动代理当前未运行' : '未检测到可用本地代理，将尝试直连' } };
+}
+
+async function testNetworkSettings(value) {
+  const requestedHost = String(value?.host || '127.0.0.1').trim().toLowerCase().replace(/^\[|\]$/g, '');
+  if (value?.mode === 'manual' && !['127.0.0.1', 'localhost', '::1'].includes(requestedHost)) throw new Error('当前版本只支持本机 HTTP 代理');
+  const config = normalizeNetworkConfig(value);
+  if (config.mode === 'manual' && !config.port) throw new Error('请填写代理端口');
+  const dashscopePromise = fetch('https://dashscope.aliyuncs.com/compatible-mode/v1/models', { signal: AbortSignal.timeout(12000) })
+    .then(response => ({ ok: response.status > 0 && response.status < 500, status: response.status, route: 'direct', error: '' }))
+    .catch(error => ({ ok: false, status: 0, route: 'direct', error: String(error.message || error).slice(0, 220) }));
+  const arxivPromise = httpGetWithProxy('https://export.arxiv.org/api/query?search_query=all%3Atest&start=0&max_results=1', {
+    headers: { 'User-Agent': 'hacher/1.4 (network test)' },
+    timeout: 15000,
+    networkConfig: config,
+  }).then(response => ({ ok: response.status === 200, status: response.status, route: response.route, proxy: response.proxy, error: response.status === 200 ? '' : `HTTP ${response.status}` }))
+    .catch(error => ({ ok: false, status: 0, route: '', proxy: null, error: String(error.message || error).slice(0, 220) }));
+  const [dashscope, arxiv] = await Promise.all([dashscopePromise, arxivPromise]);
+  const ok = dashscope.ok && arxiv.ok;
+  return { ok, partial: !ok && (dashscope.ok || arxiv.ok), dashscope, arxiv };
+}
+
+async function runNetworkSmokeTest() {
+  const resultFile = path.join(app.getPath('userData'), 'network-smoke.json');
+  try {
+    const settings = await networkSettingsSnapshot();
+    const test = await testNetworkSettings(settings);
+    const arxivSource = await searchArxiv('all:test');
+    fs.writeFileSync(resultFile, JSON.stringify({ settings, test, arxivSource: { status: arxivSource.status, count: arxivSource.results.length, error: arxivSource.error, route: arxivSource.route } }, null, 2), 'utf8');
+  } catch (error) {
+    fs.writeFileSync(resultFile, JSON.stringify({ error: String(error.message || error) }, null, 2), 'utf8');
+  }
 }
 
 async function createTerminalEnvironment() {
@@ -144,6 +417,7 @@ function initializeUpdater() {
     availableVersion: String(info.version || ''),
     releaseName: String(info.releaseName || ''),
     releaseNotes: normalizeReleaseNotes(info.releaseNotes),
+    releaseDate: String(info.releaseDate || ''),
     error: '',
     percent: 0,
   }));
@@ -152,6 +426,7 @@ function initializeUpdater() {
     availableVersion: '',
     releaseName: '',
     releaseNotes: '',
+    releaseDate: '',
     error: '',
     percent: 0,
   }));
@@ -168,6 +443,7 @@ function initializeUpdater() {
     availableVersion: String(info.version || updateStatus.availableVersion || ''),
     releaseName: String(info.releaseName || updateStatus.releaseName || ''),
     releaseNotes: normalizeReleaseNotes(info.releaseNotes) || updateStatus.releaseNotes,
+    releaseDate: String(info.releaseDate || updateStatus.releaseDate || ''),
     percent: 100,
     error: '',
   }));
@@ -176,6 +452,29 @@ function initializeUpdater() {
     state: 'error',
     error: String(error?.message || error || '更新服务发生未知错误').slice(0, 1000),
   }));
+}
+
+async function runUpdateCheck() {
+  initializeUpdater();
+  if (!app.isPackaged) return broadcastUpdateStatus({ state: 'unsupported', error: '开发模式不执行在线更新，请使用安装版测试。' });
+  if (updateOperation) return updateStatusSnapshot();
+  updateOperation = autoUpdater.checkForUpdates();
+  try {
+    await updateOperation;
+    return updateStatusSnapshot();
+  } catch (error) {
+    return broadcastUpdateStatus({ state: 'error', error: String(error?.message || error).slice(0, 1000) });
+  } finally {
+    updateOperation = null;
+  }
+}
+
+function scheduleAutomaticUpdateChecks() {
+  if (!app.isPackaged || process.env.HACHER_DISABLE_AUTO_UPDATE === '1') return;
+  if (updateCheckTimer) clearInterval(updateCheckTimer);
+  setTimeout(() => runUpdateCheck(), 12000).unref?.();
+  updateCheckTimer = setInterval(() => runUpdateCheck(), 6 * 60 * 60 * 1000);
+  updateCheckTimer.unref?.();
 }
 
 function notifyStateChanged() {
@@ -436,7 +735,7 @@ async function loadMailDetail(itemId) {
       date: parsed.date instanceof Date ? parsed.date.toISOString() : item.receivedAt || '',
       text: content.text,
       html: content.html,
-      blockedExternalImages: content.blockedExternalImages,
+      externalImageCount: content.externalImageCount,
       inlineImagesOmitted: content.inlineImagesOmitted,
       attachments: (parsed.attachments || []).slice(0, 50).map(attachment => ({
         name: String(attachment.filename || '未命名附件').slice(0, 500),
@@ -563,7 +862,11 @@ async function buildArxivQuery(apiKey, requestText) {
       enable_thinking: false,
     }),
   });
-  if (!response.ok) throw new Error('无法生成检索关键词');
+  if (!response.ok) {
+    let detail = '';
+    try { const payload = await response.json(); detail = String(payload?.error?.message || payload?.message || payload?.code || '').trim(); } catch {}
+    throw new Error(`关键词服务返回 ${response.status}${detail ? `：${detail.slice(0, 180)}` : ''}`);
+  }
   const data = await response.json();
   const keywords = String(data.choices?.[0]?.message?.content || '').replace(/[`"\r\n]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 180);
   if (!keywords) throw new Error('检索关键词为空');
@@ -572,15 +875,21 @@ async function buildArxivQuery(apiKey, requestText) {
 
 async function searchArxiv(query) {
   const url = `https://export.arxiv.org/api/query?search_query=${encodeURIComponent(query)}&start=0&max_results=8&sortBy=submittedDate&sortOrder=descending`;
-  const response = await fetch(url, { headers: { 'User-Agent': 'hacher/0.2 (personal research assistant)' }, signal: AbortSignal.timeout(20000) });
-  if (!response.ok) throw new Error(`arXiv 返回 ${response.status}`);
-  const xml = await response.text();
-  return [...xml.matchAll(/<entry>([\s\S]*?)<\/entry>/g)].map(match => {
-    const entry = match[1];
-    const pick = tag => decodeXml(entry.match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`))?.[1] || '');
-    const authors = [...entry.matchAll(/<author>[\s\S]*?<name>([\s\S]*?)<\/name>[\s\S]*?<\/author>/g)].map(a => decodeXml(a[1]));
-    return { title: pick('title'), summary: pick('summary'), published: pick('published').slice(0, 10), authors, url: pick('id') };
-  }).filter(item => item.title && item.url);
+  try {
+    const response = await httpGetWithProxy(url, { headers: { 'User-Agent': 'hacher/0.2 (personal research assistant)' } });
+    if (response.status !== 200) throw new Error(`arXiv 返回 ${response.status}`);
+    const xml = response.body;
+    const results = [...xml.matchAll(/<entry>([\s\S]*?)<\/entry>/g)].map(match => {
+      const entry = match[1];
+      const pick = tag => decodeXml(entry.match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`))?.[1] || '');
+      const authors = [...entry.matchAll(/<author>[\s\S]*?<name>([\s\S]*?)<\/name>[\s\S]*?<\/author>/g)].map(a => decodeXml(a[1]));
+      return { title: pick('title'), summary: pick('summary'), published: pick('published').slice(0, 10), authors, url: pick('id') };
+    }).filter(item => item.title && item.url);
+    return { status: 'success', results, error: '', route: response.route, proxy: response.proxy };
+  } catch (error) {
+    console.error('arXiv search failed:', error.message);
+    return { status: 'unavailable', results: [], error: String(error.message || error).slice(0, 300), route: '', proxy: null };
+  }
 }
 
 async function searchWeb(apiKey, query) {
@@ -598,19 +907,24 @@ async function searchWeb(apiKey, query) {
         },
       }),
     });
-    if (!response.ok) return [];
+    if (!response.ok) {
+      let detail = '';
+      try { const payload = await response.json(); detail = String(payload?.message || payload?.code || '').trim(); } catch {}
+      return { status: 'unavailable', results: [], error: `千问网页检索返回 ${response.status}${detail ? `：${detail.slice(0, 160)}` : ''}` };
+    }
     const data = await response.json();
     const results = Array.isArray(data.output?.search_info?.search_results) ? data.output.search_info.search_results : [];
     const seen = new Set();
-    return results.map(result => {
+    const normalized = results.map(result => {
       const url = normalizeExternalUrl(result.url);
       if (!url || !result.title || seen.has(url)) return null;
       seen.add(url);
       return { source: 'web', title: String(result.title).trim(), url, summary: String(result.snippet || result.summary || '').trim(), published: result.publish_time || result.published_time || result.date || '' };
     }).filter(Boolean).slice(0, 10);
+    return { status: 'success', results: normalized, error: '', route: 'direct' };
   } catch (error) {
     console.error('Web search failed:', error);
-    return [];
+    return { status: 'unavailable', results: [], error: `千问网页检索失败：${String(error.message || error).slice(0, 240)}`, route: '' };
   }
 }
 
@@ -829,8 +1143,9 @@ function repairTopicResults() {
 
 function repairWorkspaceSchema() {
   const state = readState();
-  let changed = Number(state._schemaVersion) < 3;
-  state._schemaVersion = 3;
+  const previousSchemaVersion = Number(state._schemaVersion) || 0;
+  let changed = previousSchemaVersion < 4;
+  state._schemaVersion = 4;
   if (!Array.isArray(state.projects)) state.projects = [];
   for (const project of state.projects) {
     for (const key of ['files', 'logs', 'bom', 'milestones', 'issues', 'decisions']) {
@@ -845,6 +1160,11 @@ function repairWorkspaceSchema() {
   });
   if (!Array.isArray(state.aiTasks)) { state.aiTasks = []; changed = true; }
   if (!Array.isArray(state.inboxItems)) { state.inboxItems = []; changed = true; }
+  if (previousSchemaVersion < 4 && state.inboxItems.length) {
+    state.inboxItems = [];
+    state.messageCenterResetAt = new Date().toISOString();
+    changed = true;
+  }
   if (changed) writeState(state);
 }
 
@@ -994,6 +1314,11 @@ app.whenReady().then(async () => {
   repairTopics();
   repairTopicResults();
   repairWorkspaceSchema();
+  if (process.env.HACHER_NETWORK_SMOKE === '1') {
+    await runNetworkSmokeTest();
+    app.quit();
+    return;
+  }
   if (process.env.ORBITO_PTY_SMOKE === '1') {
     await runTerminalSmokeTest();
     app.quit();
@@ -1002,6 +1327,7 @@ app.whenReady().then(async () => {
   createTray();
   createWindow();
   initializeUpdater();
+  scheduleAutomaticUpdateChecks();
   scheduleMailAutoSync({ runSoon: true });
   powerMonitor.on('resume', () => syncMailIfStale());
   app.on('activate', () => {
@@ -1024,23 +1350,13 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   app.isQuitting = true;
   if (mailSyncTimer) clearInterval(mailSyncTimer);
+  if (updateCheckTimer) clearInterval(updateCheckTimer);
 });
 
 ipcMain.handle('update:get-status', () => updateStatusSnapshot());
 
 ipcMain.handle('update:check', async () => {
-  initializeUpdater();
-  if (!app.isPackaged) return broadcastUpdateStatus({ state: 'unsupported', error: '开发模式不执行在线更新，请使用安装版测试。' });
-  if (updateOperation) return updateStatusSnapshot();
-  updateOperation = autoUpdater.checkForUpdates();
-  try {
-    await updateOperation;
-    return updateStatusSnapshot();
-  } catch (error) {
-    return broadcastUpdateStatus({ state: 'error', error: String(error?.message || error).slice(0, 1000) });
-  } finally {
-    updateOperation = null;
-  }
+  return runUpdateCheck();
 });
 
 ipcMain.handle('update:download', async () => {
@@ -1312,6 +1628,22 @@ ipcMain.handle('ai:clear-key', () => {
   }
 });
 
+ipcMain.handle('network:get-settings', async () => networkSettingsSnapshot());
+
+ipcMain.handle('network:save-settings', async (_event, settings = {}) => {
+  try {
+    const config = writeNetworkConfig(settings);
+    return { ok: true, config, status: await networkSettingsSnapshot() };
+  } catch (error) {
+    return { ok: false, error: String(error.message || error).slice(0, 300) };
+  }
+});
+
+ipcMain.handle('network:test', async (_event, settings = {}) => {
+  try { return await testNetworkSettings(settings); }
+  catch (error) { return { ok: false, partial: false, error: String(error.message || error).slice(0, 300) }; }
+});
+
 ipcMain.handle('topic:add', (_event, name) => {
   if (!name || !String(name).trim()) throw new Error('主题名称不能为空');
   const state = readState();
@@ -1364,26 +1696,44 @@ ipcMain.handle('briefing:generate', async (_event, topicId) => {
   }
 
   try {
-    // Build arXiv query first, then search both arXiv and web in parallel
-    const arxivQuery = await buildArxivQuery(apiKey, topic.name);
-    const [arxivResults, webResults] = await Promise.all([
-      searchArxiv(arxivQuery),
-      searchWeb(apiKey, topic.name),
-    ]);
+    let arxivQuery = '';
+    const arxivPromise = buildArxivQuery(apiKey, topic.name)
+      .then(query => { arxivQuery = query; return searchArxiv(query); })
+      .catch(error => ({ status: 'unavailable', results: [], error: `arXiv 检索词生成失败：${String(error.message || error).slice(0, 240)}`, route: '' }));
+    const [arxivSource, webSource] = await Promise.all([arxivPromise, searchWeb(apiKey, topic.name)]);
+    const sourceFailures = [arxivSource, webSource].filter(source => source.status !== 'success');
+    if (sourceFailures.length === 2) throw new Error(sourceFailures.map(source => source.error).join('；'));
 
     // Re-read after network requests so a deleted topic cannot be restored by stale state.
     const latestState = readState();
     if (!Array.isArray(latestState.topics)) latestState.topics = [];
     const latestTopic = latestState.topics.find(t => Number(t.id) === Number(topic.id));
     if (!latestTopic) throw new Error('主题已删除，搜索结果未保存');
-    latestTopic.results = [...arxivResults, ...webResults];
-    latestTopic.searchedAt = new Date().toISOString();
+    const completedAt = new Date().toISOString();
+    latestTopic.results = [...arxivSource.results, ...webSource.results];
+    latestTopic.searchedAt = completedAt;
+    latestTopic.lastAttemptAt = completedAt;
+    latestTopic.lastError = '';
+    latestTopic.lastWarning = sourceFailures.map(source => source.error).join('；');
+    latestTopic.sourceStatus = {
+      arxiv: { status: arxivSource.status, error: arxivSource.error || '', route: arxivSource.route || '', updatedAt: completedAt },
+      web: { status: webSource.status, error: webSource.error || '', route: webSource.route || '', updatedAt: completedAt },
+    };
     latestTopic.lastQuery = arxivQuery;
     writeState(latestState);
     notifyStateChanged();
     return latestTopic;
   } catch (error) {
-    throw new Error(`情报生成失败：${error.message}`);
+    const message = String(error?.message || error || '未知错误').slice(0, 500);
+    const failedState = readState();
+    const failedTopic = Array.isArray(failedState.topics) ? failedState.topics.find(t => Number(t.id) === Number(topic.id)) : null;
+    if (failedTopic) {
+      failedTopic.lastAttemptAt = new Date().toISOString();
+      failedTopic.lastError = message;
+      writeState(failedState);
+      notifyStateChanged();
+    }
+    throw new Error(`情报生成失败：${message}`);
   }
 });
 
@@ -1510,8 +1860,9 @@ ipcMain.handle('ai:chat', async (_event, payload) => {
   if (asksForSearch) {
     try {
       const query = await buildArxivQuery(apiKey, recentUserText);
-      const results = await searchArxiv(query);
-      return { text: formatArxivResults(results, query), usage: null, model: 'arXiv API' };
+      const source = await searchArxiv(query);
+      if (source.status !== 'success') throw new Error(source.error || 'arXiv 暂时不可用');
+      return { text: formatArxivResults(source.results, query), usage: null, model: 'arXiv API' };
     } catch (error) {
       return { text: `我尝试执行了真实的 arXiv 检索，但这次失败了：${error.message}。我没有生成或补写任何论文结果，请稍后重试。`, usage: null, model: 'arXiv API' };
     }

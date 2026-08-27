@@ -3,21 +3,69 @@ const { convert } = require('html-to-text');
 
 const allowedTags = [
   'p', 'div', 'span', 'br', 'strong', 'b', 'em', 'i', 'u', 's', 'del', 'mark',
-  'ul', 'ol', 'li', 'blockquote', 'pre', 'code', 'h1', 'h2', 'h3', 'h4',
-  'table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td', 'hr', 'a', 'img',
+  'small', 'sub', 'sup', 'center', 'font', 'ul', 'ol', 'li', 'blockquote', 'pre',
+  'code', 'h1', 'h2', 'h3', 'h4', 'table', 'caption', 'colgroup', 'col',
+  'thead', 'tbody', 'tfoot', 'tr', 'th', 'td', 'hr', 'a', 'img',
 ];
+
+const safeStyleValue = /^(?!.*(?:url\s*\(|expression\s*\(|javascript|@import))[#(),.%\-\w\s/]+$/i;
 
 function sanitizeRichMail(rawHtml, allowInlineImages = true) {
   return sanitizeHtml(String(rawHtml || ''), {
     allowedTags,
     allowedAttributes: {
+      '*': ['style', 'align', 'dir', 'lang', 'title'],
       a: ['href', 'title', 'target', 'rel'],
-      img: ['src', 'alt', 'title', 'width', 'height'],
-      th: ['colspan', 'rowspan'],
-      td: ['colspan', 'rowspan'],
+      font: ['color', 'face'],
+      img: ['src', 'alt', 'title', 'width', 'height', 'loading', 'decoding', 'referrerpolicy'],
+      table: ['width', 'height', 'border', 'cellpadding', 'cellspacing', 'bgcolor', 'align'],
+      col: ['width', 'span'],
+      th: ['colspan', 'rowspan', 'width', 'height', 'bgcolor', 'align', 'valign'],
+      td: ['colspan', 'rowspan', 'width', 'height', 'bgcolor', 'align', 'valign'],
     },
     allowedSchemes: ['http', 'https', 'mailto'],
-    allowedSchemesByTag: { img: ['data'] },
+    allowedSchemesByTag: { img: ['http', 'https', 'data'] },
+    allowedStyles: {
+      '*': {
+        color: [safeStyleValue],
+        'background-color': [safeStyleValue],
+        'font-family': [safeStyleValue],
+        'font-weight': [safeStyleValue],
+        'font-style': [safeStyleValue],
+        'text-align': [safeStyleValue],
+        'text-decoration': [safeStyleValue],
+        'vertical-align': [safeStyleValue],
+        display: [safeStyleValue],
+        width: [safeStyleValue],
+        'min-width': [safeStyleValue],
+        'max-width': [safeStyleValue],
+        height: [safeStyleValue],
+        'min-height': [safeStyleValue],
+        'max-height': [safeStyleValue],
+        margin: [safeStyleValue],
+        'margin-top': [safeStyleValue],
+        'margin-right': [safeStyleValue],
+        'margin-bottom': [safeStyleValue],
+        'margin-left': [safeStyleValue],
+        padding: [safeStyleValue],
+        'padding-top': [safeStyleValue],
+        'padding-right': [safeStyleValue],
+        'padding-bottom': [safeStyleValue],
+        'padding-left': [safeStyleValue],
+        border: [safeStyleValue],
+        'border-top': [safeStyleValue],
+        'border-right': [safeStyleValue],
+        'border-bottom': [safeStyleValue],
+        'border-left': [safeStyleValue],
+        'border-color': [safeStyleValue],
+        'border-style': [safeStyleValue],
+        'border-width': [safeStyleValue],
+        'border-radius': [safeStyleValue],
+        'border-collapse': [safeStyleValue],
+        'table-layout': [safeStyleValue],
+        'white-space': [safeStyleValue],
+      },
+    },
     allowProtocolRelative: false,
     disallowedTagsMode: 'discard',
     transformTags: {
@@ -26,12 +74,23 @@ function sanitizeRichMail(rawHtml, allowInlineImages = true) {
         attribs: { href: attribs.href || '', title: attribs.title || '', target: '_blank', rel: 'noreferrer noopener' },
       }),
       img: (_tagName, attribs) => {
-        const src = String(attribs.src || '');
+        const originalSrc = String(attribs.src || '').trim();
+        const src = originalSrc.startsWith('//') ? `https:${originalSrc}` : originalSrc;
         const safeInline = allowInlineImages && /^data:image\/(?:png|jpe?g|gif|webp);base64,/i.test(src);
-        if (!safeInline) return { tagName: 'span', text: '[图片已隐藏]' };
+        const safeRemote = /^https?:\/\/[^\s]+$/i.test(src);
+        if (!safeInline && !safeRemote) return { tagName: 'span', text: '[无法显示的图片]' };
         return {
           tagName: 'img',
-          attribs: { src, alt: attribs.alt || '邮件内嵌图片', title: attribs.title || '' },
+          attribs: {
+            src,
+            alt: attribs.alt || '邮件图片',
+            title: attribs.title || '',
+            width: attribs.width || '',
+            height: attribs.height || '',
+            loading: 'lazy',
+            decoding: 'async',
+            referrerpolicy: 'no-referrer',
+          },
         };
       },
     },
@@ -58,7 +117,7 @@ function cleanPlainText(value) {
 
 function prepareMailContent(parsed = {}) {
   const rawHtml = typeof parsed.html === 'string' ? parsed.html : '';
-  const blockedExternalImages = (rawHtml.match(/<img\b[^>]*\bsrc\s*=\s*["']?https?:/gi) || []).length;
+  const externalImageCount = (rawHtml.match(/<img\b[^>]*\bsrc\s*=\s*["']?(?:https?:)?\/\//gi) || []).length;
   let html = rawHtml ? sanitizeRichMail(rawHtml, true) : '';
   let inlineImagesOmitted = false;
   if (Buffer.byteLength(html, 'utf8') > 3 * 1024 * 1024) {
@@ -71,7 +130,7 @@ function prepareMailContent(parsed = {}) {
     selectors: [{ selector: 'img', format: 'skip' }],
   }) : '';
   const text = cleanPlainText(htmlText || parsed.text || '') || '这封邮件没有可显示的正文。';
-  return { html, text: text.slice(0, 200000), blockedExternalImages, inlineImagesOmitted };
+  return { html, text: text.slice(0, 200000), externalImageCount, inlineImagesOmitted };
 }
 
 module.exports = { cleanPlainText, prepareMailContent };
