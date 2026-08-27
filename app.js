@@ -12,6 +12,8 @@ let events = [];
 let projects = [];
 let aiTasks = [];
 let inboxItems = [];
+let userProfile = {displayName:'',workspaceName:'我的工作区',tagline:'研究生 · 创业者 · Maker',avatar:''};
+let profileAvatarDraft = '';
 let mailStatus = {configured:false,provider:'qq',email:'',lastTestedAt:'',lastSyncedAt:'',autoSync:true,syncIntervalMinutes:5,syncLimit:50};
 let mailSyncing = false;
 let inboxFilter = 'important';
@@ -35,6 +37,10 @@ let xterm = null;
 let fitAddon = null;
 let terminalStarted = false;
 let terminalStartPromise = null;
+let modalReturnFocus = null;
+let drawerReturnFocus = null;
+let viewTransitionToken = 0;
+const viewScrollPositions = new Map();
 const viewNames = { dashboard:'工作台总览',today:'今日待办',calendar:'日程安排',projects:'项目中心','project-detail':'项目工作区',papers:'论文与科研',english:'英语学习',briefing:'每日情报',diy:'DIY 项目',inventory:'电子元件库',inbox:'消息中心',memory:'AI 记忆中心',terminal:'Agent 终端' };
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -42,11 +48,16 @@ const h = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;',
 const setCountBadge = (id, count) => { const el=document.getElementById(id); if(el){el.textContent=count;el.hidden=count===0} };
 const updateNotificationIndicator = () => { const el=$('#notificationDot');if(!el)return;const count=buildMessageItems().filter(item=>item.important&&!item.processed).length;el.hidden=count===0;el.title=count?`${count} 条重要消息`:''; };
 
+function normalizeUserProfile(value={}){return{displayName:String(value.displayName||'').trim().slice(0,30),workspaceName:String(value.workspaceName||'我的工作区').trim().slice(0,50)||'我的工作区',tagline:String(value.tagline||'研究生 · 创业者 · Maker').trim().slice(0,80)||'本地模式 · 已保存',avatar:/^data:image\/(?:png|jpeg|webp);base64,/i.test(value.avatar||'')?value.avatar:''}}
+function profileInitials(){const name=userProfile.displayName||'我';const compact=name.replace(/\s+/g,'');return compact.slice(0,2).toUpperCase()||'我'}
+function renderProfileAvatar(element){if(!element)return;element.replaceChildren();element.textContent=userProfile.avatar?'':profileInitials();element.classList.toggle('has-image',Boolean(userProfile.avatar));if(userProfile.avatar)element.style.setProperty('background-image',`url("${userProfile.avatar}")`,'important');else element.style.removeProperty('background-image')}
+function renderUserProfile(){userProfile=normalizeUserProfile(userProfile);renderProfileAvatar($('#sidebarProfileAvatar'));renderProfileAvatar($('#topProfileAvatar'));if($('#sidebarWorkspaceName'))$('#sidebarWorkspaceName').textContent=userProfile.workspaceName;if($('#sidebarProfileTagline'))$('#sidebarProfileTagline').textContent=userProfile.displayName?(userProfile.tagline||'本地模式 · 已保存'):'点击设置你的名字';updateClockGreeting()}
+
 function greetingForHour(hour){if(hour>=5&&hour<9)return'早上好';if(hour<12)return'上午好';if(hour<14)return'中午好';if(hour<18)return'下午好';if(hour<23)return'晚上好';return'夜深了'}
 function updateClockGreeting(){
   const now=new Date();const week=['星期日','星期一','星期二','星期三','星期四','星期五','星期六'];const greeting=greetingForHour(now.getHours());
   const hasWorkspaceData=tasks.length||projects.length||inventory.length||events.length||papers.length||englishPlans.length||topics.length;
-  const greetingText=$('#dashboardGreetingText');if(greetingText)greetingText.textContent=`${greeting}，${hasWorkspaceData?'继续推进你的工作台':'开始建立你的工作台'}`;
+  const greetingText=$('#dashboardGreetingText');if(greetingText)greetingText.textContent=`${greeting}${userProfile.displayName?`，${userProfile.displayName}`:''}，${hasWorkspaceData?'继续推进你的工作台':'开始建立你的工作台'}`;
   const aiWelcome=$('#aiWelcome');if(aiWelcome)aiWelcome.textContent=`${greeting}！我可以参考你的任务、库存和长期记忆与你对话。`;
   const date=$('#todayDate');if(date)date.textContent=`${now.getFullYear()} 年 ${now.getMonth()+1} 月 ${now.getDate()} 日 · ${week[now.getDay()]}`;
 }
@@ -89,7 +100,8 @@ function renderTasks() {
   const todayTasks=tasks.filter(t=>taskScheduledDate(t)===today);
   const todayOpen=todayTasks.filter(t=>!t.done).length;
   const todayDone=todayTasks.filter(t=>t.done).length;
-  $('#focusList').innerHTML = openTasks.length ? openTasks.slice(0,3).map(t => `<div class="focus-item ${t.done?'done':''}"><button class="check" data-task="${t.id}">${t.done?'✓':''}</button><div><b>${h(t.title)}</b><small>${h(taskMeta(t).split(' · ')[0])}${linkedProjectName(t.projectId)?` · ${h(linkedProjectName(t.projectId))}`:''}</small></div><em>${h(taskDateLabel(t))}</em></div>`).join('') : '<div class="empty-state"><span>✓</span><b>还没有今日任务</b><small>创建任务后，最重要的三项会出现在这里</small><button data-action="add-task">创建任务</button></div>';
+  const focusTasks=[...todayTasks.filter(t=>!t.done),...openTasks.filter(t=>taskScheduledDate(t)!==today)].slice(0,3);
+  $('#focusList').innerHTML = focusTasks.length ? focusTasks.map(t => `<div class="focus-item ${t.done?'done':''}"><button class="check" data-task="${t.id}">${t.done?'✓':''}</button><div><b>${h(t.title)}</b><small>${h(taskMeta(t).split(' · ')[0])}${linkedProjectName(t.projectId)?` · ${h(linkedProjectName(t.projectId))}`:''}</small></div><em>${h(taskDateLabel(t))}</em></div>`).join('') : '<div class="empty-state"><span>✓</span><b>今天还没有任务</b><small>创建任务后，最重要的三项会出现在这里</small><button data-action="add-task">创建任务</button></div>';
   const visibleTasks = tasks.filter(t => taskFilter === 'all' ? !t.done&&taskScheduledDate(t)===today : taskFilter === 'done' ? t.done : !t.done);
   $('#fullTaskList').innerHTML = visibleTasks.length ? visibleTasks.map(t => `<div class="task-row ${t.done?'done':''}"><button class="task-check" data-task="${t.id}">${t.done?'✓':''}</button><div><b>${h(t.title)}</b><small>${h(taskMeta(t))}</small></div><time>${h(taskDateLabel(t))}</time></div>`).join('') : '<div class="memory-empty"><span>✓</span><b>这里暂时没有任务</b><small>切换其他分类，或创建一项新任务</small></div>';
   setCountBadge('todoBadge',openTasks.length);
@@ -268,8 +280,10 @@ async function toggleMailProcessed(itemId){
   const item=inboxItems.find(value=>value.id===itemId);if(!item)return;item.processedAt=item.processedAt?null:new Date().toISOString();await saveState(['inboxItems']);renderInbox();renderDashboardInbox();showToast(item.processedAt?'已标记为已处理':'已恢复为待处理');closeMessageDrawer();
 }
 
-function showMessageDrawer(html){$('#messageDrawerContent').innerHTML=html;$('#messageDrawer').classList.add('open');$('#messageDrawerBackdrop').classList.add('show')}
-function closeMessageDrawer(){$('#messageDrawer').classList.remove('open');$('#messageDrawerBackdrop').classList.remove('show')}
+function currentFocusable(root){return [...root.querySelectorAll('button:not(:disabled),a[href],input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex]:not([tabindex="-1"])')].filter(element=>!element.hidden&&element.getClientRects().length)}
+function syncOverlayState(){document.body.classList.toggle('has-overlay',$('#modalWrap').classList.contains('show')||$('#messageDrawer').classList.contains('open'))}
+function showMessageDrawer(html){const drawer=$('#messageDrawer');if(!drawer.classList.contains('open'))drawerReturnFocus=document.activeElement;$('#messageDrawerContent').innerHTML=html;drawer.classList.add('open');drawer.setAttribute('aria-hidden','false');$('#messageDrawerBackdrop').classList.add('show');$('#messageDrawerBackdrop').setAttribute('aria-hidden','false');syncOverlayState();requestAnimationFrame(()=>drawer.focus({preventScroll:true}))}
+function closeMessageDrawer(){const drawer=$('#messageDrawer');if(!drawer.classList.contains('open'))return;drawer.classList.remove('open');drawer.setAttribute('aria-hidden','true');$('#messageDrawerBackdrop').classList.remove('show');$('#messageDrawerBackdrop').setAttribute('aria-hidden','true');syncOverlayState();const target=drawerReturnFocus;drawerReturnFocus=null;if(target?.isConnected)requestAnimationFrame(()=>target.focus({preventScroll:true}))}
 function openMessageDetail(type,id){
   if(type==='mail'){openMailDetail(id);return}const item=buildMessageItems().find(row=>row.type===type&&String(row.id)===String(id));if(!item)return;const meta=messageTypeMeta[type];let detail='';let actions='';
   if(type==='project'){const project=item.project;detail=`<div class="message-detail-card"><b>${item.kind==='issue'?'项目问题':'项目里程碑'}</b><p>${h(item.ref?.notes||item.summary)}</p><dl><dt>关联项目</dt><dd>${h(project?.name||'未知项目')}</dd>${item.kind==='issue'?`<dt>严重程度</dt><dd>${h(item.ref?.severity||'中')}</dd>`:`<dt>计划日期</dt><dd>${h(item.ref?.dueDate||'未设置')}</dd>`}</dl></div>`;actions=`<button class="quiet" data-action="close-message-drawer">关闭</button><button data-message-project="${h(project?.id)}" data-message-project-tab="governance">打开项目</button>`}
@@ -484,19 +498,35 @@ async function refreshAllTopics() {
 
 async function saveState(domains=null) {
   if (!window.orbito) return;
-  const all={tasks,inventory,inventoryImports,conversations:conversations.slice(-100),memories,briefings,topics,englishPlans,papers,events,projects,aiTasks,inboxItems};
+  const all={tasks,inventory,inventoryImports,conversations:conversations.slice(-100),memories,briefings,topics,englishPlans,papers,events,projects,aiTasks,inboxItems,userProfile};
   const changes=Array.isArray(domains)?Object.fromEntries(domains.map(key=>[key,all[key]])):all;
   try { await (window.orbito.patchState?window.orbito.patchState(changes):window.orbito.saveState(all)); }
   catch (error) { console.error(error); showToast('本地保存失败，请稍后重试'); }
 }
 
 function switchView(id) {
-  $$('.page').forEach(p=>p.classList.toggle('active',p.id===id));
-  $$('.nav-item').forEach(n=>n.classList.toggle('active',n.dataset.view===(id==='project-detail'?'projects':id)));
+  const target=$(`#${id}.page`);if(!target)return;
+  const current=$('.page.active');
+  const navId=id==='project-detail'?'projects':id;
+  $$('.nav-item').forEach(n=>n.classList.toggle('active',n.dataset.view===navId));
   document.querySelector('.sidebar').classList.remove('open');
-  window.scrollTo({top:0,behavior:'smooth'});
-  if(id==='terminal')setTimeout(()=>initTerminal(),80);
-  if(id==='inbox')renderInbox();
+  if(current?.id===id){if(id==='inbox')renderInbox();return}
+  if(current)viewScrollPositions.set(current.id,window.scrollY);
+  const token=++viewTransitionToken;
+  const reduced=window.matchMedia?.('(prefers-reduced-motion: reduce)').matches||document.documentElement.classList.contains('reduced-effects');
+  const reveal=()=>{
+    if(token!==viewTransitionToken)return;
+    $$('.page').forEach(page=>page.classList.remove('active','view-leaving','view-entering'));
+    target.classList.add('active');
+    window.scrollTo({top:viewScrollPositions.get(id)||0,behavior:'auto'});
+    if(!reduced){target.classList.add('view-entering');setTimeout(()=>{if(token===viewTransitionToken)target.classList.remove('view-entering')},190)}
+    if(id==='terminal')setTimeout(()=>initTerminal(),80);
+    if(id==='inbox')renderInbox();
+  };
+  $$('.page').forEach(page=>page.classList.remove('view-leaving','view-entering'));
+  if(!current||reduced){reveal();return}
+  current.classList.add('view-leaving');
+  setTimeout(reveal,80);
 }
 
 function setTerminalStatus(running, text){const el=$('#terminalStatus');if(!el)return;el.classList.toggle('running',running);el.lastChild.textContent=text}
@@ -522,8 +552,8 @@ async function openClaude(){switchView('terminal');const ok=await initTerminal()
 async function showTerminalContext(){switchView('terminal');const ok=await initTerminal();if(ok)window.orbito.terminalWrite('node tools/hacher.cjs context\r')}
 
 function showToast(text){const t=$('#toast');t.querySelector('p').textContent=text;t.classList.add('show');clearTimeout(showToast.timer);showToast.timer=setTimeout(()=>t.classList.remove('show'),2300)}
-function showModal(html,wide=false){$('#modalContent').innerHTML=html;$('#modal').classList.toggle('project-detail-modal',wide);$('#modalWrap').classList.add('show');$('#overlay').classList.add('show')}
-function closeModal(){ $('#modalWrap').classList.remove('show');$('#modal').classList.remove('project-detail-modal');$('#overlay').classList.remove('show') }
+function showModal(html,wide=false){const wrap=$('#modalWrap');if(!wrap.classList.contains('show'))modalReturnFocus=document.activeElement;$('#modalContent').innerHTML=html;$('#modal').classList.toggle('project-detail-modal',wide);wrap.classList.add('show');wrap.setAttribute('aria-hidden','false');$('#overlay').classList.add('show');$('#overlay').setAttribute('aria-hidden','false');syncOverlayState();requestAnimationFrame(()=>$('#modal').focus({preventScroll:true}))}
+function closeModal(){const wrap=$('#modalWrap');if(!wrap.classList.contains('show'))return;wrap.classList.remove('show');wrap.setAttribute('aria-hidden','true');$('#modal').classList.remove('project-detail-modal');$('#overlay').classList.remove('show');$('#overlay').setAttribute('aria-hidden','true');syncOverlayState();const target=modalReturnFocus;modalReturnFocus=null;if(target?.isConnected)requestAnimationFrame(()=>target.focus({preventScroll:true}))}
 function inferredAgentContext(){const page=$('.page.active')?.id;if(page==='project-detail'&&activeProjectId)return`project:${activeProjectId}`;if(['today','calendar'].includes(page))return'today';if(page==='inventory')return'inventory';if(page==='papers')return'papers';if(page==='briefing')return'briefing';return'workspace'}
 function openAI(options={}){const config=options&&typeof options==='object'&&!options.target?options:{};const wasOpen=$('#aiPanel').classList.contains('open');if(config.context)agentContextSelection=config.context;else if(!wasOpen&&!config.keepContext)agentContextSelection=inferredAgentContext();const running=aiTasks.find(task=>['queued','running'].includes(task.status));if(running&&!config.keepTask)activeAITaskId=running.id;$('#aiPanel').classList.add('open');setAIPane('tasks');renderAITaskCenter();if(config.prompt!==undefined){$('#agentRequestInput').value=config.prompt;setTimeout(()=>$('#agentRequestInput')?.focus(),120)}}
 function closeAI(){ $('#aiPanel').classList.remove('open') }
@@ -735,8 +765,14 @@ async function profileModal(){
   let networkStatus={mode:'auto',detected:{label:'自动检测'}};try{networkStatus=await window.orbito?.getNetworkSettings()||networkStatus}catch(error){console.error(error)}
   const updateCopy=appUpdateStatus.state==='available'?`发现 v${appUpdateStatus.availableVersion}`:appUpdateStatus.state==='downloaded'?`v${appUpdateStatus.availableVersion} 已下载`:appUpdateStatus.state==='up-to-date'?'当前已是最新版':`当前版本 v${appUpdateStatus.currentVersion||'—'}`;
   const networkCopy=networkStatus.mode==='direct'?'直接连接':networkStatus.mode==='manual'?`手动代理 · ${networkStatus.host}:${networkStatus.port}`:`自动 · ${networkStatus.detected?.label||'按系统网络连接'}`;
-  showModal(`<div class="modal-icon">XY</div><h2>我的工作区</h2><p>当前为单人、本地优先模式。账户与多端同步将在后续版本加入。</p><div class="result-box"><p><b>后台智能服务：</b>${aiConfigured?'已配置':'尚未配置'}</p><p><b>数据存储：</b>本机应用数据目录</p><p><b>长期记忆：</b>${memories.length} 条</p><p><b>未完成任务：</b>${tasks.filter(t=>!t.done).length} 项</p></div><div class="workspace-settings"><button type="button" data-action="api-settings"><span>🔑</span><div><b>后台智能服务</b><small>${aiConfigured?'用于截图识别、论文检索与每日情报':'配置后启用后台识别与检索'}</small></div><i>›</i></button><button type="button" data-action="network-settings"><span>⌁</span><div><b>网络与代理</b><small>${h(networkCopy)}</small></div><i>›</i></button><button type="button" data-action="app-update"><span>↻</span><div><b>版本与更新</b><small>${h(updateCopy)}</small></div><i>›</i></button></div><div class="modal-actions"><button class="cancel" data-action="show-data">打开数据位置</button><button class="confirm" data-action="close-modal">完成</button></div>`)
+  profileAvatarDraft=userProfile.avatar;
+  const avatarStyle=profileAvatarDraft?` style="background-image:url('${h(profileAvatarDraft)}')"`:'';
+  showModal(`<div class="profile-settings-head"><div class="profile-avatar-editor"><div id="profileAvatarPreview" class="profile-avatar-preview ${profileAvatarDraft?'has-image':''}"${avatarStyle}>${profileAvatarDraft?'':h(profileInitials())}</div><button type="button" data-action="profile-avatar-upload">更换头像</button>${profileAvatarDraft?'<button type="button" class="quiet" data-action="profile-avatar-remove">移除</button>':''}<input id="profileAvatarInput" type="file" accept="image/png,image/jpeg,image/webp" hidden></div><div><p class="label">本地身份</p><h2>我的工作区</h2><p>这份资料只保存在当前电脑，并同步显示在工作台的两个个人入口。</p></div></div><div class="form-grid profile-fields"><div class="form-field"><label>显示名称</label><input id="profileDisplayName" value="${h(userProfile.displayName)}" placeholder="例如：向阳" maxlength="30"></div><div class="form-field"><label>工作区名称</label><input id="profileWorkspaceName" value="${h(userProfile.workspaceName)}" placeholder="例如：向阳的工作台" maxlength="50"></div><div class="form-field full"><label>一句话身份</label><input id="profileTagline" value="${h(userProfile.tagline)}" placeholder="例如：研究生 · 创业者 · Maker" maxlength="80"></div></div><div class="workspace-settings"><button type="button" data-action="api-settings"><span>🔑</span><div><b>后台智能服务</b><small>${aiConfigured?'用于截图识别、论文检索与每日情报':'配置后启用后台识别与检索'}</small></div><i>›</i></button><button type="button" data-action="network-settings"><span>⌁</span><div><b>网络与代理</b><small>${h(networkCopy)}</small></div><i>›</i></button><button type="button" data-action="app-update"><span>↻</span><div><b>版本与更新</b><small>${h(updateCopy)}</small></div><i>›</i></button></div><div class="profile-local-note">本地优先 · ${memories.length} 条长期记忆 · ${tasks.filter(t=>!t.done).length} 项未完成任务</div><div class="modal-actions"><button class="cancel" data-action="show-data">打开数据位置</button><button class="confirm" data-action="save-profile">保存资料</button></div>`)
 }
+
+function resizeProfileAvatar(file){return new Promise((resolve,reject)=>{if(!file||file.size>10*1024*1024){reject(new Error('请选择不超过 10 MB 的图片'));return}const reader=new FileReader();reader.onerror=()=>reject(new Error('无法读取图片'));reader.onload=()=>{const image=new Image();image.onerror=()=>reject(new Error('图片格式无法识别'));image.onload=()=>{const size=256;const canvas=document.createElement('canvas');canvas.width=size;canvas.height=size;const context=canvas.getContext('2d');const side=Math.min(image.naturalWidth,image.naturalHeight);const sx=(image.naturalWidth-side)/2,sy=(image.naturalHeight-side)/2;context.drawImage(image,sx,sy,side,side,0,0,size,size);resolve(canvas.toDataURL('image/jpeg',.86))};image.src=reader.result};reader.readAsDataURL(file)})}
+function updateProfileAvatarPreview(){const preview=$('#profileAvatarPreview');if(!preview)return;preview.classList.toggle('has-image',Boolean(profileAvatarDraft));preview.style.backgroundImage=profileAvatarDraft?`url("${profileAvatarDraft}")`:'';preview.textContent=profileAvatarDraft?'':profileInitials()}
+async function saveProfile(){userProfile=normalizeUserProfile({displayName:$('#profileDisplayName')?.value,workspaceName:$('#profileWorkspaceName')?.value,tagline:$('#profileTagline')?.value,avatar:profileAvatarDraft});await saveState(['userProfile']);renderUserProfile();closeModal();showToast('工作区资料已保存到本机')}
 
 function formatUpdateBytes(value){const bytes=Math.max(0,Number(value)||0);if(!bytes)return'0 MB';if(bytes<1024*1024)return`${(bytes/1024).toFixed(1)} KB`;return`${(bytes/1024/1024).toFixed(1)} MB`}
 function updatePanelMarkup(status=appUpdateStatus){
@@ -960,7 +996,7 @@ document.addEventListener('click',e=>{
     'quick-add':()=>formModal('task'),'add-task':()=>formModal('task'),'add-event':()=>eventModal(),'save-event':saveEvent,'add-project':()=>projectModal(),'add-diy-project':()=>projectModal('diy'),'save-project':saveProject,'add-part':()=>formModal('part'),'add-memory':memoryModal,'project-add-task':()=>formModal('task',activeProjectId),'project-add-event':()=>eventModal(null,activeProjectId),'project-link-tasks':()=>projectItemsModal('tasks'),'project-link-events':()=>projectItemsModal('events'),'project-save-items':saveProjectItems,'project-link-papers':projectPapersModal,'project-save-papers':saveProjectPapers,'project-add-bom':projectBomModal,'project-save-bom':saveProjectBom,'project-add-milestone':milestoneModal,'project-save-milestone':saveMilestone,'project-add-issue':issueModal,'project-save-issue':saveIssue,'project-add-decision':decisionModal,'project-save-decision':saveDecision,
     'paper-search':paperSearchModal,'execute-paper-search':executePaperSearch,
     'inventory-import':()=>$('#inventoryFileInput').click(),'save-part-edit':savePartEdit,'paper-import':importPapers,
-    'search':searchModal,'message-center':()=>switchView('inbox'),'close-message-drawer':closeMessageDrawer,'profile':profileModal,'api-settings':apiSettingsModal,'save-api-settings':saveAPISettings,'clear-api-key':clearAPIKey,'network-settings':networkSettingsModal,'network-test':testNetworkSettings,'network-save':saveNetworkSettings,'mail-settings':mailSettingsModal,'mail-save-test':saveAndTestMail,'mail-sync':syncMailInbox,'mail-clear':clearMailSettings,'app-update':()=>{closeMessageDrawer();appUpdateModal()},'update-check':checkAppUpdate,'update-download':downloadAppUpdate,'update-install':installAppUpdate,
+    'search':searchModal,'message-center':()=>switchView('inbox'),'close-message-drawer':closeMessageDrawer,'profile':profileModal,'save-profile':saveProfile,'profile-avatar-upload':()=>$('#profileAvatarInput')?.click(),'profile-avatar-remove':()=>{profileAvatarDraft='';updateProfileAvatarPreview()},'api-settings':apiSettingsModal,'save-api-settings':saveAPISettings,'clear-api-key':clearAPIKey,'network-settings':networkSettingsModal,'network-test':testNetworkSettings,'network-save':saveNetworkSettings,'mail-settings':mailSettingsModal,'mail-save-test':saveAndTestMail,'mail-sync':syncMailInbox,'mail-clear':clearMailSettings,'app-update':()=>{closeMessageDrawer();appUpdateModal()},'update-check':checkAppUpdate,'update-download':downloadAppUpdate,'update-install':installAppUpdate,
     'add-purchase':()=>showToast('已加入待确认采购清单'),'paper-save':()=>showToast('已加入待读列表'),'create-insight':()=>showToast('已保存为产品洞察'),
     'english-session':englishPlanModal,'save-english-plan':createEnglishPlan,'add-topic':addTopicModal,'refresh-all-topics':refreshAllTopics,'brief-read':()=>showToast('后续版本可调用语音模型朗读'),'project-add-log':projectLogModal,'project-save-log':saveProjectLog,'project-import-files':()=>attachProjectFiles('import'),'project-link-files':()=>attachProjectFiles('link'),'show-data':()=>window.orbito?.showDataFolder(),
     'terminal-restart':()=>initTerminal(true),'terminal-claude':openClaude,'terminal-context':showTerminalContext,'terminal-clear':()=>{xterm?.clear();xterm?.focus()},'terminal-stop':async()=>{await window.orbito?.terminalKill();terminalStarted=false;setTerminalStatus(false,'已结束')}
@@ -969,6 +1005,7 @@ document.addEventListener('click',e=>{
 
 document.addEventListener('change',e=>{
   if(e.target.id==='networkMode'){toggleNetworkManualFields();return}
+  if(e.target.id==='profileAvatarInput'){const file=e.target.files?.[0];e.target.value='';if(file)resizeProfileAvatar(file).then(value=>{profileAvatarDraft=value;updateProfileAvatarPreview()}).catch(error=>showToast(error.message||String(error)));return}
   if(e.target.id==='projectFileCategory'&&activeProjectId!=null){
     const value=e.target.value;
     if(Object.hasOwn(projectFileCategoryLabels,value))projectFileCategorySelections.set(String(activeProjectId),value);
@@ -979,9 +1016,10 @@ $('#overlay').addEventListener('click',()=>closeModal());
 $('#messageDrawerBackdrop').addEventListener('click',()=>closeMessageDrawer());
 $('#mobileMenu').addEventListener('click',()=>document.querySelector('.sidebar').classList.toggle('open'));
 $('#inventoryFileInput').addEventListener('change',e=>{const files=[...e.target.files];e.target.value='';if(files.length)processInventoryScreenshots(files)});
-document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeMessageDrawer();closeModal()}if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();showToast('输入关键词即可搜索整个工作台')}if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='n'){e.preventDefault();formModal('task')}});
+document.addEventListener('keydown',e=>{const activeLayer=$('#messageDrawer').classList.contains('open')?$('#messageDrawer'):$('#modalWrap').classList.contains('show')?$('#modal'):null;if(e.key==='Tab'&&activeLayer){const focusable=currentFocusable(activeLayer);if(!focusable.length){e.preventDefault();activeLayer.focus();return}const first=focusable[0],last=focusable.at(-1);if(e.shiftKey&&(document.activeElement===first||document.activeElement===activeLayer)){e.preventDefault();last.focus()}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus()}}if(e.key==='Escape'){if($('#messageDrawer').classList.contains('open'))closeMessageDrawer();else closeModal()}if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();showToast('输入关键词即可搜索整个工作台')}if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='n'){e.preventDefault();formModal('task')}});
 
 async function initialize(){
+  const prefersReducedMotion=window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;const lowPowerDevice=(navigator.hardwareConcurrency&&navigator.hardwareConcurrency<=4)||navigator.connection?.saveData;document.documentElement.classList.toggle('reduced-effects',Boolean(prefersReducedMotion||lowPowerDevice));
   if(window.orbito){
     try{
       appUpdateStatus=await window.orbito.getUpdateStatus()||appUpdateStatus;
@@ -1004,13 +1042,14 @@ async function initialize(){
       if(Array.isArray(state.projects))projects=state.projects.map(ensureProjectSchema);
       if(Array.isArray(state.aiTasks))aiTasks=state.aiTasks;
       if(Array.isArray(state.inboxItems))inboxItems=state.inboxItems;
+      if(state.userProfile&&typeof state.userProfile==='object')userProfile=normalizeUserProfile(state.userProfile);
       papers.forEach(paper=>{if(!Array.isArray(paper.projectIds))paper.projectIds=[]});
       await loadMailStatus();
       await refreshAIStatus();
       if(!state.tasks)await saveState();
     }catch(error){console.error(error);}
   }
-  renderTasks();renderInventory();renderMemories();renderCalendar();renderTopicCards();renderTopicResults();renderDashboardBriefing();renderEnglishPlans();renderPapers();renderProjects();renderAITaskCenter();renderInbox();renderDashboardInbox();
+  renderUserProfile();renderTasks();renderInventory();renderMemories();renderCalendar();renderTopicCards();renderTopicResults();renderDashboardBriefing();renderEnglishPlans();renderPapers();renderProjects();renderAITaskCenter();renderInbox();renderDashboardInbox();
   updateNotificationIndicator();
   updateClockGreeting();setInterval(updateClockGreeting,60*1000);
   window.orbito?.onStateChanged?.(state=>{
@@ -1027,7 +1066,8 @@ async function initialize(){
     if(Array.isArray(state.projects))projects=state.projects.map(ensureProjectSchema);
     if(Array.isArray(state.aiTasks))aiTasks=state.aiTasks;
     if(Array.isArray(state.inboxItems))inboxItems=state.inboxItems;
-    renderTasks();renderInventory();renderMemories();renderTopicCards();renderTopicResults();renderDashboardBriefing();renderEnglishPlans();renderPapers();renderProjects();renderAITaskCenter();renderInbox();renderDashboardInbox();if($('#project-detail').classList.contains('active'))renderProjectWorkspace();
+    if(state.userProfile&&typeof state.userProfile==='object')userProfile=normalizeUserProfile(state.userProfile);
+    renderUserProfile();renderTasks();renderInventory();renderMemories();renderTopicCards();renderTopicResults();renderDashboardBriefing();renderEnglishPlans();renderPapers();renderProjects();renderAITaskCenter();renderInbox();renderDashboardInbox();if($('#project-detail').classList.contains('active'))renderProjectWorkspace();
   });
   // Auto-generate briefing on startup if API is configured and not yet today
   setTimeout(() => autoBriefing(), 1500);

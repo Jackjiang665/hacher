@@ -30,25 +30,25 @@
         <button class="nav-item" data-view="memory"><i>◉</i><span>AI 记忆中心</span><em id="memoryBadge" hidden>0</em></button>
       </nav>
       <button class="ai-entry" data-view-link="terminal"><span class="ai-glyph">›_</span><div><b>Agent 终端</b><small>Claude Code · 本地工作区</small></div><i>›</i></button>
-      <div class="profile"><span>XY</span><div><b>我的工作区</b><small>本地模式 · 已保存</small></div><button type="button" data-action="profile" title="工作区设置" aria-label="打开工作区设置">•••</button></div>
+      <div class="profile" data-action="profile"><button class="profile-avatar" id="sidebarProfileAvatar" type="button" data-action="profile" aria-label="打开个人设置">我</button><div><b id="sidebarWorkspaceName">我的工作区</b><small id="sidebarProfileTagline">本地模式 · 已保存</small></div><button type="button" data-action="profile" title="工作区设置" aria-label="打开工作区设置">•••</button></div>
     </aside>
 
     <main class="main">
       <header class="topbar">
         <button class="icon-btn mobile-menu" id="mobileMenu">☰</button>
         <div class="search" data-action="search"><span>⌕</span><input placeholder="搜索项目、论文、实验或元器件…" readonly /><kbd>Ctrl K</kbd></div>
-        <div class="top-actions"><button class="icon-btn" title="消息中心" aria-label="打开消息中心" data-action="message-center">♢<b class="notify" id="notificationDot" hidden></b></button><button class="avatar" title="个人设置" data-action="profile">XY</button></div>
+        <div class="top-actions"><button class="icon-btn" title="消息中心" aria-label="打开消息中心" data-action="message-center">♢<b class="notify" id="notificationDot" hidden></b></button><button class="avatar" id="topProfileAvatar" title="个人设置" aria-label="打开个人设置" data-action="profile">我</button></div>
       </header>
 
       <div class="pages">
         <section class="page active" id="dashboard">
           <div class="page-head"><div><p class="date-line" id="todayDate"></p><h1><span id="dashboardGreetingText">你好，开始建立你的工作台</span> <span>👋</span></h1><p id="dashboardSummary">目前还没有个人数据。创建任务或项目后，这里会自动汇总。</p></div></div>
           <div class="dashboard-grid">
-            <article class="card focus-card span-2"><div class="card-title"><div><p class="label">今日焦点</p><h2>最重要的事情</h2></div><button class="text-btn" data-view-link="today">查看全部 →</button></div><div class="focus-list" id="focusList"></div></article>
+            <article class="card schedule-card dashboard-primary-schedule"><div class="card-title"><div><p class="label">今日日程</p><h2>今天的安排</h2></div><button class="text-btn" data-view-link="calendar">打开日历 →</button></div><div id="todaySchedule"></div></article>
             <article class="card dashboard-inbox-card span-2" id="dashboardInbox"></article>
-            <article class="card ai-brief-card" id="dashboardBriefing"><div class="ai-badge">✦</div><p class="label light">AI 晨间简报</p><h2>尚未生成</h2><p class="brief-copy">设置你关注的研究方向后，AI 可以通过真实来源检索并整理最新信息。</p><button data-view-link="briefing">设置关注主题 <span>→</span></button></article>
+            <article class="card focus-card"><div class="card-title"><div><p class="label">今日焦点</p><h2>最重要的事情</h2></div><button class="text-btn" data-view-link="today">查看全部 →</button></div><div class="focus-list" id="focusList"></div></article>
             <article class="card projects-card span-2"><div class="card-title"><div><p class="label">项目进展</p><h2>正在推进</h2></div><button class="text-btn" data-view-link="projects">全部项目 →</button></div><div id="dashboardProjects"></div></article>
-            <article class="card schedule-card"><div class="card-title"><div><p class="label">今日日程</p><h2>接下来</h2></div><button class="text-btn" data-view-link="calendar">日历 →</button></div><div id="todaySchedule"></div></article>
+            <article class="card ai-brief-card" id="dashboardBriefing"><div class="ai-badge">✦</div><p class="label light">AI 晨间简报</p><h2>尚未生成</h2><p class="brief-copy">设置你关注的研究方向后，AI 可以通过真实来源检索并整理最新信息。</p><button data-view-link="briefing">设置关注主题 <span>→</span></button></article>
             <article class="card inventory-mini"><div class="card-title"><div><p class="label">电子实验室</p><h2>元器件概览</h2></div><button class="text-btn" data-view-link="inventory">进入仓库 →</button></div><div class="metric-row"><div><strong id="dashInventoryTypes">0</strong><small>种元器件</small></div><div><strong id="dashInventoryTotal">0</strong><small>估算总数</small></div><div><strong class="red" id="dashLowStock">0</strong><small>低库存</small></div></div><div id="inventoryMiniHint"></div></article>
           </div>
         </section>
@@ -77,11 +77,11 @@
     </main>
   </div>
 
-  <div class="overlay" id="overlay"></div>
-  <div class="modal-wrap" id="modalWrap"><div class="modal" id="modal"><button class="modal-close" data-action="close-modal">×</button><div id="modalContent"></div></div></div>
-  <div class="message-drawer-backdrop" id="messageDrawerBackdrop"></div>
-  <aside class="message-drawer" id="messageDrawer" aria-label="消息详情"><button class="message-drawer-close" data-action="close-message-drawer" aria-label="关闭消息详情">×</button><div id="messageDrawerContent"></div></aside>
-  <div class="toast" id="toast"><span>✓</span><p></p></div>
+  <div class="overlay" id="overlay" aria-hidden="true"></div>
+  <div class="modal-wrap" id="modalWrap" aria-hidden="true"><div class="modal" id="modal" role="dialog" aria-modal="true" aria-label="操作窗口" tabindex="-1"><button class="modal-close" data-action="close-modal" aria-label="关闭窗口">×</button><div id="modalContent"></div></div></div>
+  <div class="message-drawer-backdrop" id="messageDrawerBackdrop" aria-hidden="true"></div>
+  <aside class="message-drawer" id="messageDrawer" role="dialog" aria-modal="true" aria-label="消息详情" aria-hidden="true" tabindex="-1"><button class="message-drawer-close" data-action="close-message-drawer" aria-label="关闭消息详情">×</button><div id="messageDrawerContent"></div></aside>
+  <div class="toast" id="toast" role="status" aria-live="polite"><span>✓</span><p></p></div>
   <script src="vendor/xterm.js"></script>
   <script src="vendor/addon-fit.js"></script>
   <script src="app.js"></script>

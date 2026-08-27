@@ -502,7 +502,7 @@ function readState() {
   } catch (error) {
     console.error('Failed to read hacher state:', error);
   }
-  return { tasks: null, inventory: null, inventoryImports: [], conversations: [], memories: [], briefings: [], topics: [], englishPlans: [], papers: [], events: [], projects: [], aiTasks: [], inboxItems: [], _revision: 0, updatedAt: null };
+  return { tasks: null, inventory: null, inventoryImports: [], conversations: [], memories: [], briefings: [], topics: [], englishPlans: [], papers: [], events: [], projects: [], aiTasks: [], inboxItems: [], userProfile: {}, _revision: 0, updatedAt: null };
 }
 
 function getMailConfigFile() {
@@ -1388,7 +1388,7 @@ ipcMain.handle('state:save', (_event, state) => {
   return writeState(state);
 });
 ipcMain.handle('state:patch', (_event, changes = {}) => {
-  const allowed = ['tasks','inventory','inventoryImports','conversations','memories','briefings','topics','englishPlans','papers','events','projects','aiTasks','inboxItems'];
+  const allowed = ['tasks','inventory','inventoryImports','conversations','memories','briefings','topics','englishPlans','papers','events','projects','aiTasks','inboxItems','userProfile'];
   const state = readState();
   for (const key of allowed) if (Object.prototype.hasOwnProperty.call(changes, key)) state[key] = changes[key];
   lastRendererWriteAt = Date.now();

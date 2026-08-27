@@ -24,10 +24,11 @@ function readState() {
       papers: Array.isArray(parsed.papers) ? parsed.papers : [],
       events: Array.isArray(parsed.events) ? parsed.events : [],
       projects: Array.isArray(parsed.projects) ? parsed.projects : [],
+      userProfile: parsed.userProfile && typeof parsed.userProfile === 'object' ? {...parsed.userProfile,avatar:parsed.userProfile.avatar?'[本地头像已设置]':''} : {},
       updatedAt: parsed.updatedAt || null,
     };
   } catch (error) {
-    if (error.code === 'ENOENT') return { tasks: [], inventory: [], inventoryImports: [], conversations: [], memories: [], briefings: [], topics: [], englishPlans: [], papers: [], events: [], projects: [], updatedAt: null };
+    if (error.code === 'ENOENT') return { tasks: [], inventory: [], inventoryImports: [], conversations: [], memories: [], briefings: [], topics: [], englishPlans: [], papers: [], events: [], projects: [], userProfile: {}, updatedAt: null };
     fail(`无法读取工作台数据：${error.message}`);
   }
 }
