@@ -1,4 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&display=swap');
 :root{--bg:#f3f5f2;--paper:#fff;--sidebar:#f8faf7;--ink:#18221d;--muted:#7c8981;--line:#e1e7e2;--green:#235b43;--green2:#39765a;--soft:#e8f0ea;--amber:#b0792a;--blue:#456b86;--red:#bd554e;--shadow:0 8px 28px rgba(32,56,43,.055)}
 [hidden]{display:none!important}
 .brand-logo{overflow:hidden}.brand-logo img{width:100%;height:100%;object-fit:cover}
@@ -142,3 +141,60 @@ body.has-overlay{overflow:hidden}
 /* The legacy profile button rule belongs only to the overflow action. */
 .profile>.profile-avatar{margin-left:0!important;background-color:#d9e3dc;background-position:center!important;background-size:cover!important;background-repeat:no-repeat!important}
 .profile>button:last-child{margin-left:auto}
+
+/* Project timeline readability: keep long notes inside the card and let them breathe. */
+.project-timeline{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+.project-timeline-row{min-width:0;padding:11px 0;align-items:start}
+.project-timeline-row>div{min-width:0}
+.project-timeline-row time{font-size:11px;line-height:1.45}
+.project-timeline-row b{font-size:14px;line-height:1.5;overflow-wrap:anywhere;word-break:break-word}
+.project-timeline-row small{font-size:13px;line-height:1.65;white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere;word-break:break-word}
+@media(max-width:850px){.project-timeline{grid-template-columns:minmax(0,1fr)}}
+
+/* Readability system: stable Windows typography and stronger light-theme contrast. */
+:root{
+  --bg:#f1f3ef;
+  --paper:#fff;
+  --sidebar:#f7f8f5;
+  --ink:#1b2720;
+  --muted:#5f6d65;
+  --line:#d9e0da;
+  --text-primary:#1b2720;
+  --text-secondary:#58665e;
+  --text-tertiary:#707d75;
+  --font-ui:"Segoe UI Variable Text","Segoe UI","Microsoft YaHei UI","Microsoft YaHei",sans-serif;
+}
+html,body,button,input,textarea,select{font-family:var(--font-ui);font-kerning:normal}
+body{font-size:14px;line-height:1.55;text-rendering:optimizeLegibility}
+h1,h2,h3,h4{color:var(--text-primary);font-weight:600}
+.page-head h1{font-size:32px;line-height:1.25;letter-spacing:-.025em}
+.page-head h1 span{font-size:inherit}
+.page-head>div>p:last-child{color:var(--text-secondary);font-size:14px;line-height:1.65}
+.date-line,.label{color:var(--text-tertiary);font-size:12px;letter-spacing:.06em}
+.card-title h2,.card>h2,.project-card-head h2{font-size:18px;line-height:1.4}
+.page p:not(.label):not(.date-line),.modal p:not(.label),.message-drawer p:not(.label){font-size:13px;line-height:1.7}
+.page small,.modal small,.message-drawer small{color:var(--text-secondary)!important;font-size:12px!important;line-height:1.55}
+.page time,.modal time,.message-drawer time{color:var(--text-tertiary);font-size:11px!important;line-height:1.45}
+.form-field label{color:var(--text-secondary);font-size:12px}
+.form-field input,.form-field select,.form-field textarea,.result-row input{font-size:14px;line-height:1.5}
+.solid-btn,.outline-btn,.text-btn,.modal-actions button{font-size:13px}
+.nav-item{color:#536159;font-size:14px}.nav-item i{color:#66746c}.nav-item.active{color:#174b34}
+nav>p{color:#75827a;font-size:11px;letter-spacing:.08em}
+.brand small,.ai-entry small,.profile small{font-size:11px!important}.profile b,.ai-entry b{font-size:13px}
+.search input{color:var(--text-primary);font-size:14px}.search input::placeholder{color:#7d8982}
+.focus-item b,.project-main b,.task-row b,.inbox-item b,.dashboard-message-list b,.dashboard-mail-list b{font-size:13px;line-height:1.5}
+.focus-item small,.focus-item em,.project-main small,.task-row small,.task-row time{font-size:12px!important}
+.brief-copy,.ai-tip p,.privacy-copy,.dashboard-inbox-empty{color:var(--text-secondary);font-size:13px;line-height:1.7}
+.project-card h2{font-size:18px}.project-card>p{color:var(--text-secondary);font-size:13px;line-height:1.7}.tags span,.diy-metrics span{font-size:11px}
+.paper h3,.news-item h3{font-size:15px;line-height:1.5}.paper p,.paper small,.news-item p,.news-item small{font-size:12px!important;line-height:1.7}.paper button,.news-item>button{font-size:12px}
+.topic-card .topic-name{font-size:15px}.topic-card .topic-meta,.topic-result-header small{font-size:12px!important}
+.inventory-stats small,.inventory-stats em{font-size:12px!important}.mini-search,.table-tools button{font-size:12px}th{color:#657269;font-size:12px}td,td:first-child{font-size:13px;line-height:1.55}
+.inbox-status-grid small,.inbox-sender small,.inbox-subject small,.dashboard-message-list small,.dashboard-mail-list small{font-size:12px!important}
+.inbox-status-grid b,.inbox-sender b,.inbox-subject b,.message-row-copy b{font-size:13px}.inbox-row time,.message-row time{font-size:11px!important}.inbox-process-btn,.message-process{font-size:12px}
+.project-section-head p,.project-card-head p{color:var(--text-tertiary)!important;font-size:11px!important;letter-spacing:.04em}.project-section-head h3{font-size:17px}
+.project-file-row b,.project-log h4,.project-compact-row b,.project-linked-event>div b,.project-linked-paper b{font-size:13px}.project-file-row small,.project-compact-row small,.project-linked-event>div small,.project-linked-paper small{font-size:12px!important}
+.project-log p{grid-template-columns:92px minmax(0,1fr);font-size:13px!important;line-height:1.65}.project-log p b{font-size:12px}
+.message-detail-label,.message-source,.message-detail-card dl{font-size:12px}.message-detail-card>p,.message-ai-answer{font-size:14px;line-height:1.75}
+.empty-state b,.memory-empty b,.project-empty b,.message-empty b,.inbox-empty b{font-size:14px}.empty-state small,.memory-empty small,.project-empty small,.message-empty small,.inbox-empty small{font-size:12px!important}
+.calendar-toolbar h2{font-size:16px}.times span,.day>b,.event,.event small{font-size:11px!important}
+@media(max-width:850px){.page-head h1{font-size:27px}.page p:not(.label):not(.date-line),.modal p:not(.label),.message-drawer p:not(.label){font-size:13px}}
